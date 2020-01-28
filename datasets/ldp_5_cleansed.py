@@ -38,10 +38,14 @@ class LDP5Cleansed(Dataset):
         path = os.path.join(self.data_dir)
         assert(os.path.exists(path))
 
+        print('Loading data into memory...')
+
         # get all npz files, and check if there is at least one
         files = [x for x in glob.glob(path + '/**/*.npz', recursive=True)]
         assert(len(files) > 0)
 
+        print('{} files found.'.format(len(files)))
+        
         downsample_factor = self.__class__.DEFAULT_BEAT_RESOLUTION // self.beat_resolution
 
         # load files
