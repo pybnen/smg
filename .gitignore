@@ -270,3 +270,6 @@ dmypy.json
 .history
 
 # End of https://www.gitignore.io/api/python,pycharm+all,intellij+all,jupyternotebooks,visualstudiocode
+
+### pytorch state file
+*.pth
