@@ -3,7 +3,7 @@ from tqdm import tqdm
 import torch
 import torch.optim as optim
 import torch.nn as nn
-from smg.datasets.ldp_5_cleansed import LDP5Cleansed
+from smg.datasets.lpd_5_cleansed import LPD5Cleansed
 from smg.models.recurrent import RecurrentSMG
 
 ex = Experiment('train_lstm')
@@ -21,26 +21,28 @@ def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
 
 
 @ex.capture
-def get_dataset(data_dir, lowest_pitch, n_pitches, beat_resolution, measures_per_sample):
+def get_dataset(data_dir, lowest_pitch, n_pitches, beat_resolution, in_seq_length, out_seq_length, step_size):
     kwargs = {
         "data_dir": data_dir, 
         "lowest_pitch": lowest_pitch,
         "n_pitches": n_pitches,
         "beat_resolution": beat_resolution,
-        "measures_per_sample": measures_per_sample
+        "in_seq_length": in_seq_length,
+        "out_seq_length": out_seq_length,
+        "step_size": step_size
     }
-    return LDP5Cleansed(**kwargs)
+    return LPD5Cleansed(**kwargs)
 
 
 @ex.capture
-def get_model(hidden_size, num_layers, n_instruments, n_pitches, timesteps_per_measure, measures_per_sample):
+def get_model(hidden_size, num_layers, in_seq_length, out_seq_length, n_instruments, n_pitches):
     kwargs = {
         "hidden_size": hidden_size,
         "num_layers": num_layers,
-        "seq_length": timesteps_per_measure * measures_per_sample, 
-        "n_instruments": n_instruments, # # part of out features
+        "in_seq_length": in_seq_length, 
+        "out_seq_length": out_seq_length, # part of out features
+        "n_instruments": n_instruments, # part of out features
         "n_pitches": n_pitches, # part of out features
-        "timesteps_per_measure": timesteps_per_measure # part of out features
     }
     return RecurrentSMG(**kwargs)
 
@@ -79,7 +81,7 @@ def config():
     n_workers = 0
 
     # dataset config
-    data_dir = "../data/few_examples" # #"../../../data/lpd_5",
+    data_dir = "../data/examples" # #"../../../data/lpd_5",
 
     # model configs
     hidden_size = 200
@@ -94,11 +96,14 @@ def config():
     lowest_pitch = 24
     n_pitches = 72
     beat_resolution = 4
-    
-    measures_per_sample = 4
-    BEATS_PER_MEASURE = 4
-    timesteps_per_measure = beat_resolution * BEATS_PER_MEASURE
 
+    measures_per_sample = 4
+    beats_per_measure = 4
+
+    in_seq_length = beat_resolution * beats_per_measure * measures_per_sample
+    step_size = beat_resolution * beats_per_measure
+    out_seq_length = 1
+    
 
 @ex.automain
 def main():
