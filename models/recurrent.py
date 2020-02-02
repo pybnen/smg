@@ -11,7 +11,6 @@ class RecurrentSMG(nn.Module):
         self.kwargs = copy(kwargs)
         self.n_pitches = kwargs.pop('n_pitches')
         self.n_instruments = kwargs.pop('n_instruments')
-        self.in_seq_length = kwargs.pop('in_seq_length')
         self.out_seq_length = kwargs.pop('out_seq_length')
 
 
@@ -57,25 +56,26 @@ class RecurrentSMG(nn.Module):
 
 
 if __name__ == "__main__":
-    save = False
+    save = True
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    beat_resolution = 4
+    beats_per_measure = 4
+    measures_per_sample = 4
+
+    in_seq_length = beat_resolution * beats_per_measure * measures_per_sample
     
     if save:
-        beat_resolution = 4
-        beats_per_measure = 4
-        measures_per_sample = 4
 
-        in_seq_length = beat_resolution * beats_per_measure * measures_per_sample
         step_size = beat_resolution * beats_per_measure
-        out_seq_length = step_size
+        out_seq_length = 1
         n_instruments = 5
         n_pitches = 72
 
         kwargs = {
             "hidden_size": 200,
             "num_layers": 1,
-            "in_seq_length": in_seq_length, 
             "out_seq_length": out_seq_length, # part of out features
             "n_instruments": n_instruments, # part of out features
             "n_pitches": n_pitches, # part of out features
@@ -84,8 +84,6 @@ if __name__ == "__main__":
         model =  RecurrentSMG(**kwargs)
     else:
         model, info = RecurrentSMG.load_from_ckpt('ckpt_test.pth')
-
-        in_seq_length = model.in_seq_length
         n_instruments = model.n_instruments
         n_pitches = model.n_pitches
 
@@ -97,7 +95,8 @@ if __name__ == "__main__":
     seq = torch.rand((batch_size, in_seq_length, n_instruments, n_pitches))
 
     pred = model.forward(seq)
-    print(seq.size(), pred.size())
+    print("input size:".ljust(15), seq.size())
+    print("output size:".ljust(15), pred.size())
 
     if save:
-        model.save_ckpt('ckpt_test.pth', {'hello': 'world'})
+        model.save_ckpt('ckpt_test.pth', {'in_seq_length': in_seq_length})
