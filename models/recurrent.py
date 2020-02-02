@@ -10,7 +10,8 @@ class RecurrentSMG(nn.Module):
 
         self.kwargs = copy(kwargs)
         self.n_pitches = kwargs.pop('n_pitches')
-        self.n_instruments = kwargs.pop('n_instruments')
+        self.instruments = kwargs.pop('instruments')
+        self.n_instruments = len(self.instruments)
         self.out_seq_length = kwargs.pop('out_seq_length')
 
 
@@ -70,21 +71,20 @@ if __name__ == "__main__":
 
         step_size = beat_resolution * beats_per_measure
         out_seq_length = 1
-        n_instruments = 5
+        instruments = ['piano', 'drums']
         n_pitches = 72
 
         kwargs = {
             "hidden_size": 200,
             "num_layers": 1,
             "out_seq_length": out_seq_length, # part of out features
-            "n_instruments": n_instruments, # part of out features
+            "instruments": instruments, # part of out features
             "n_pitches": n_pitches, # part of out features
         }
 
         model =  RecurrentSMG(**kwargs)
     else:
         model, info = RecurrentSMG.load_from_ckpt('ckpt_test.pth')
-        n_instruments = model.n_instruments
         n_pitches = model.n_pitches
 
         print("info", info)
@@ -92,6 +92,7 @@ if __name__ == "__main__":
     model = model.to(dev)
 
     batch_size = 8
+    n_instruments = len(model.instruments)
     seq = torch.rand((batch_size, in_seq_length, n_instruments, n_pitches))
 
     pred = model.forward(seq)

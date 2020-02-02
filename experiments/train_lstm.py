@@ -23,7 +23,7 @@ def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
 
 
 @ex.capture
-def get_dataset(data_dir, lowest_pitch, n_pitches, beat_resolution, in_seq_length, out_seq_length, step_size):
+def get_dataset(data_dir, lowest_pitch, n_pitches, beat_resolution, in_seq_length, out_seq_length, step_size, instruments):
     kwargs = {
         "data_dir": data_dir, 
         "lowest_pitch": lowest_pitch,
@@ -31,7 +31,8 @@ def get_dataset(data_dir, lowest_pitch, n_pitches, beat_resolution, in_seq_lengt
         "beat_resolution": beat_resolution,
         "in_seq_length": in_seq_length,
         "out_seq_length": out_seq_length,
-        "step_size": step_size
+        "step_size": step_size,
+        "instruments": instruments
     }
     return LPD5Cleansed(**kwargs)
 
@@ -51,13 +52,13 @@ def dataset_train_valid_split(dataset, valid_split):
 
 
 @ex.capture
-def get_model(hidden_size, num_layers, in_seq_length, out_seq_length, n_instruments, n_pitches):
+def get_model(hidden_size, num_layers, in_seq_length, out_seq_length, instruments, n_pitches):
     kwargs = {
         "hidden_size": hidden_size,
         "num_layers": num_layers,
         "in_seq_length": in_seq_length, 
         "out_seq_length": out_seq_length, # part of out features
-        "n_instruments": n_instruments, # part of out features
+        "instruments": instruments, # part of out features
         "n_pitches": n_pitches, # part of out features
     }
     return RecurrentSMG(**kwargs)
@@ -134,7 +135,8 @@ def config():
     lr = 1e-3
 
     # general configs
-    n_instruments = 5
+    # instruments = ['drums', 'piano', 'guitar', 'bass', 'strings']
+    instruments = ['piano']
     lowest_pitch = 24
     n_pitches = 72
     beat_resolution = 4

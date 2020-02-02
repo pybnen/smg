@@ -5,14 +5,26 @@ import numpy as np
 import glob
 import torch
 from tqdm import tqdm
+from enum import Enum
 
+
+class Instruments(Enum):
+    DRUMS = 0
+    PIANO = 1
+    GUITAR = 2
+    BASS = 3
+    STRINGS = 4
+    
+    def is_drum(self):
+        return self == self.__class__.DRUMS
+    
 
 class LPD5Cleansed(Dataset):
 
     N_INSTRUMENTS = 5
     DEFAULT_BEAT_RESOLUTION = 24
 
-    def __init__(self, data_dir, in_seq_length, out_seq_length, step_size, lowest_pitch, n_pitches, beat_resolution):
+    def __init__(self, data_dir, in_seq_length, out_seq_length, step_size, lowest_pitch, n_pitches, beat_resolution, **kwargs):
         '''
         :param data_dir: root of dataset
         TODO describe other params
@@ -29,6 +41,9 @@ class LPD5Cleansed(Dataset):
         self.lowest_pitch = lowest_pitch
         self.n_pitches = n_pitches
         self.beat_resolution = beat_resolution
+
+        self.instruments = kwargs.pop('instruments')
+        self.instruments = [Instruments[inst.upper()] for inst in self.instruments]
         
         self.names = []
         self.samples = []
@@ -76,7 +91,7 @@ class LPD5Cleansed(Dataset):
             # all samples from the lpd5 cleansed dataset should have 5 instruments
             assert(stacked.shape[1] == self.__class__.N_INSTRUMENTS)
 
-            stacked = stacked[:, :, self.lowest_pitch:self.lowest_pitch + self.n_pitches]
+            stacked = stacked[:, [inst.value for inst in self.instruments], self.lowest_pitch:self.lowest_pitch + self.n_pitches]
             i = np.where(stacked > 0)
             # map values from [0, 127] to [0, 1]
             v = stacked[i] / 127
@@ -130,17 +145,19 @@ if __name__ == "__main__":
     in_seq_length = beat_resolution * beats_per_measure * measures_per_sample
     step_size = beat_resolution * beats_per_measure
     out_seq_length = 1
-    
+
+    instruments = ['drums', 'piano', 'guitar', 'bass', 'strings']
     
     # test dataset
     kwargs = {
-        "data_dir": "../data/lpd_5",  # "../data/examples", 
+        "data_dir": "../data/examples", # "../data/lpd_5",  
         "lowest_pitch": 24,
         "n_pitches": 72,
         "beat_resolution": beat_resolution,
         "in_seq_length": in_seq_length,
         "out_seq_length": out_seq_length,
-        "step_size": step_size
+        "step_size": step_size,
+        "instruments": instruments
     }
     ds = LPD5Cleansed(**kwargs)
 
