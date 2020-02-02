@@ -49,7 +49,7 @@ class RecurrentSMG(nn.Module):
 
     @classmethod
     def load_from_ckpt(clazz, ckpt_file, device=None):
-        ckpt  = torch.load(ckpt_file, map_location=dev)
+        ckpt  = torch.load(ckpt_file, map_location=device)
         model = clazz(**ckpt['kwargs'])
         model.load_state_dict(ckpt['state'])
 

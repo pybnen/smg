@@ -1,8 +1,10 @@
+import numpy as np
 from sacred import Experiment
 from tqdm import tqdm
 import torch
 import torch.optim as optim
 import torch.nn as nn
+from torch.utils.data import Subset
 from smg.datasets.lpd_5_cleansed import LPD5Cleansed
 from smg.models.recurrent import RecurrentSMG
 
@@ -35,6 +37,20 @@ def get_dataset(data_dir, lowest_pitch, n_pitches, beat_resolution, in_seq_lengt
 
 
 @ex.capture
+def dataset_train_valid_split(dataset, valid_split):
+    ds_size = len(dataset)
+    indices = np.arange(ds_size)
+    train_size = int(ds_size * (1 - valid_split))
+
+    ds_train = Subset(dataset, indices[:train_size])
+    ds_valid = Subset(dataset, indices[train_size:])
+
+    assert(len(ds_train) + len(ds_valid) == ds_size)
+
+    return ds_train, ds_valid
+
+
+@ex.capture
 def get_model(hidden_size, num_layers, in_seq_length, out_seq_length, n_instruments, n_pitches):
     kwargs = {
         "hidden_size": hidden_size,
@@ -48,30 +64,55 @@ def get_model(hidden_size, num_layers, in_seq_length, out_seq_length, n_instrume
 
 
 @ex.capture
-def run(model, data_loader, dev, num_epochs=10, lr=1e-2):
+def run(model, dl_train, dl_valid, dev, num_epochs=10, lr=1e-2):
     opt = optim.Adam(model.parameters(), lr=lr)
-    loss_fn = nn.MSELoss()
+    calc_loss = nn.MSELoss()
 
     ckpt_interval = num_epochs // 10 if num_epochs > 10 else 5
+    best_total_loss = float('inf')
     
     for epoch in range(1, num_epochs+1):
-        pbar = tqdm(data_loader, desc="{:4d}. epoch".format(epoch))
+        # train model for one epoch
+        model.train()
+        pbar = tqdm(dl_train, desc="{:4d}. epoch".format(epoch))
         for x, y in pbar:
             x, y = x.to(dev), y.to(dev)
             
             opt.zero_grad()
             y_hat = model.forward(x)
-            loss = loss_fn(y_hat, y) * 1e3
+            loss = calc_loss(y_hat, y)
             loss.backward()
             opt.step()
             
             pbar.set_postfix(loss=loss.item())
-        
+
+        # validate model
+        model.eval()
+        total_loss = 0.0
+        with torch.no_grad():
+            for x, y in dl_valid:
+                x, y = x.to(dev), y.to(dev)
+                y_hat = model.forward(x)
+                loss = calc_loss(y_hat, y)
+                total_loss += loss.item()
+    
         # save every now and then
         if epoch % ckpt_interval == 0:
-            torch.save(model.state_dict(), 'lstm_snapshot_{}.pth'.format(epoch))
+            model.save_ckpt(file_name="lstm_snapshot_{}.pth".format(epoch))
+
+        # save current best model (on validation dataset)
+        new_best = False
+        if total_loss < best_total_loss:
+            best_total_loss = total_loss
+            new_best = True
+            model.save_ckpt(file_name="lstm_best.pth")
+
+        if new_best:
+            print("Validation loss: {} *NEW BEST MODEL*".format(total_loss))
+        else:
+            print("Validation loss: {}".format(total_loss))
     
-    torch.save(model.state_dict(), 'lstm_finished.pth')
+    model.save_ckpt(file_name="lstm_finished.pth")
 
 
 @ex.config
@@ -81,7 +122,8 @@ def config():
     n_workers = 0
 
     # dataset config
-    data_dir = "../data/examples" # #"../../../data/lpd_5",
+    data_dir = "../data/examples" # #"../../../data/lpd_5"
+    valid_split = 0.3
 
     # model configs
     hidden_size = 200
@@ -89,7 +131,7 @@ def config():
 
     # train configs
     num_epochs = 10
-    lr = 1e-2
+    lr = 1e-3
 
     # general configs
     n_instruments = 5
@@ -108,9 +150,13 @@ def config():
 @ex.automain
 def main():
     dataset = get_dataset()
-    data_loader = get_data_loader(dataset, shuffle=True)
+    ds_train, ds_valid = dataset_train_valid_split(dataset)
+    dl_train = get_data_loader(ds_train, shuffle=True)
+    dl_valid = get_data_loader(ds_valid, shuffle=False)
+
     dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     model = get_model()
     model = model.to(dev)
 
-    run(model, data_loader, dev)
+    run(model, dl_train, dl_valid, dev)
