@@ -24,6 +24,7 @@ def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
 
 @ex.capture
 def get_dataset(data_dir, lowest_pitch, n_pitches, beat_resolution, in_seq_length, out_seq_length, step_size, instruments):
+    instruments = list(instruments)
     kwargs = {
         "data_dir": data_dir, 
         "lowest_pitch": lowest_pitch,
@@ -53,6 +54,8 @@ def dataset_train_valid_split(dataset, valid_split):
 
 @ex.capture
 def get_model(hidden_size, num_layers, in_seq_length, out_seq_length, instruments, n_pitches):
+    instruments = list(instruments)
+
     kwargs = {
         "hidden_size": hidden_size,
         "num_layers": num_layers,
@@ -135,8 +138,18 @@ def config():
     lr = 1e-3
 
     # general configs
+    
+    # NOTE: Sacred converts a list to a custom object which could
+    # have negative side effect, for example when trying to serialize the list,
+    # as is the case in the RecurrentSmg save_ckpt function, which resulted in a
+    # error when loading a model from a saved checkpoint file.
+    # So just to be save I try to convert the parameter back to a list when used in a captured
+    # function.
+    # This sucks and is definitely a drawback of the sacred magic, as I was not
+    # expecting a list to be suddenly a differnt type. 
+
     # instruments = ['drums', 'piano', 'guitar', 'bass', 'strings']
-    instruments = ['piano']
+    instruments = ['piano'] 
     lowest_pitch = 24
     n_pitches = 72
     beat_resolution = 4
