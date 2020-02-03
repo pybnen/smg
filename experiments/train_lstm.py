@@ -78,6 +78,7 @@ def run(model, dl_train, dl_valid, dev, num_epochs=10, lr=1e-2):
     for epoch in range(1, num_epochs+1):
         # train model for one epoch
         model.train()
+        total_loss_train = 0.0
         pbar = tqdm(dl_train, desc="{:4d}. epoch".format(epoch))
         for x, y in pbar:
             x, y = x.to(dev), y.to(dev)
@@ -88,17 +89,18 @@ def run(model, dl_train, dl_valid, dev, num_epochs=10, lr=1e-2):
             loss.backward()
             opt.step()
             
+            total_loss_train += loss.item()
             pbar.set_postfix(loss=loss.item())
 
         # validate model
         model.eval()
-        total_loss = 0.0
+        total_loss_valid = 0.0
         with torch.no_grad():
             for x, y in dl_valid:
                 x, y = x.to(dev), y.to(dev)
                 y_hat = model.forward(x)
                 loss = calc_loss(y_hat, y)
-                total_loss += loss.item()
+                total_loss_valid += loss.item()
     
         # save every now and then
         if epoch % ckpt_interval == 0:
@@ -106,15 +108,14 @@ def run(model, dl_train, dl_valid, dev, num_epochs=10, lr=1e-2):
 
         # save current best model (on validation dataset)
         new_best = False
-        if total_loss < best_total_loss:
-            best_total_loss = total_loss
+        if total_loss_valid < best_total_loss:
+            best_total_loss = total_loss_valid
             new_best = True
             model.save_ckpt(file_name="lstm_best.pth")
 
-        if new_best:
-            print("Validation loss: {} *NEW BEST MODEL*".format(total_loss))
-        else:
-            print("Validation loss: {}".format(total_loss))
+        print("\nLoss (train/valid): {:.5f} / {:.5f}{}".format(total_loss_train,
+            total_loss_valid,
+            " *NEW BEST MODEL*" if new_best else ""))
     
     model.save_ckpt(file_name="lstm_finished.pth")
 
