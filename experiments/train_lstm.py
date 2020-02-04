@@ -53,13 +53,12 @@ def dataset_train_valid_split(dataset, valid_split):
 
 
 @ex.capture
-def get_model(hidden_size, num_layers, in_seq_length, out_seq_length, instruments, n_pitches):
+def get_model(hidden_size, num_layers, out_seq_length, instruments, n_pitches):
     instruments = list(instruments)
 
     kwargs = {
         "hidden_size": hidden_size,
         "num_layers": num_layers,
-        "in_seq_length": in_seq_length, 
         "out_seq_length": out_seq_length, # part of out features
         "instruments": instruments, # part of out features
         "n_pitches": n_pitches, # part of out features

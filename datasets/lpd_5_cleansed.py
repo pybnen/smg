@@ -14,9 +14,20 @@ class Instruments(Enum):
     GUITAR = 2
     BASS = 3
     STRINGS = 4
-    
+
     def is_drum(self):
         return self == self.__class__.DRUMS
+
+    def midi_program(self):
+        midi_program = {
+            self.DRUMS: 0,
+            self.PIANO: 0,
+            self.GUITAR: 25,
+            self.BASS: 33,
+            self.STRINGS: 48
+
+        }
+        return midi_program[self]
     
 
 class LPD5Cleansed(Dataset):
