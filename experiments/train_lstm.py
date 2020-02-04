@@ -1,5 +1,7 @@
+from pathlib import Path
 import numpy as np
 from sacred import Experiment
+from sacred.observers import FileStorageObserver
 from tqdm import tqdm
 import torch
 import torch.optim as optim
@@ -8,7 +10,12 @@ from torch.utils.data import Subset
 from smg.datasets.lpd_5_cleansed import LPD5Cleansed
 from smg.models.recurrent import RecurrentSMG
 
+
+pbar_update_interval = 100
+
 ex = Experiment('train_lstm')
+
+ex.captured_out_filter = lambda captured_output: "Output capturing turned off."
 
 @ex.capture
 def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
@@ -65,31 +72,51 @@ def get_model(hidden_size, num_layers, out_seq_length, instruments, n_pitches):
     }
     return RecurrentSMG(**kwargs)
 
+@ex.capture
+def get_checkpoint_dir(_run):
+    ckpt_dir = ""
+    if len(_run.observers) > 0 and isinstance(_run.observers[0], FileStorageObserver):
+        ckpt_dir = Path(_run.observers[0].dir + "/ckpt")
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+    return ckpt_dir
+
 
 @ex.capture
-def run(model, dl_train, dl_valid, dev, num_epochs=10, lr=1e-2):
+def run(model, dl_train, dl_valid, dev, _run, num_epochs=10, lr=1e-2):
+    ckpt_dir = get_checkpoint_dir()
+
     opt = optim.Adam(model.parameters(), lr=lr)
     calc_loss = nn.MSELoss()
 
     ckpt_interval = num_epochs // 10 if num_epochs > 10 else 5
     best_total_loss = float('inf')
-    
+
     for epoch in range(1, num_epochs+1):
         # train model for one epoch
         model.train()
         total_loss_train = 0.0
-        pbar = tqdm(dl_train, desc="{:4d}. epoch".format(epoch))
-        for x, y in pbar:
-            x, y = x.to(dev), y.to(dev)
+       
+        with tqdm(desc="{:4d}. epoch".format(epoch), total=len(dl_train)) as pbar:
+            for step, (x, y) in enumerate(dl_train):
+                x, y = x.to(dev), y.to(dev)
+                
+                opt.zero_grad()
+                y_hat = model.forward(x)
+                loss = calc_loss(y_hat, y)
+                loss.backward()
+                opt.step()
+                
+                _run.log_scalar("train.loss", loss.item())
+                total_loss_train += loss.item()
+                
+                
+                if (step + 1) % pbar_update_interval == 0:
+                    pbar.set_postfix(loss=loss.item())
+                    pbar.update(pbar_update_interval)
             
-            opt.zero_grad()
-            y_hat = model.forward(x)
-            loss = calc_loss(y_hat, y)
-            loss.backward()
-            opt.step()
+            # update the rest
+            pbar.update((step + 1) % pbar_update_interval)
             
-            total_loss_train += loss.item()
-            pbar.set_postfix(loss=loss.item())
 
         # validate model
         model.eval()
@@ -99,24 +126,26 @@ def run(model, dl_train, dl_valid, dev, num_epochs=10, lr=1e-2):
                 x, y = x.to(dev), y.to(dev)
                 y_hat = model.forward(x)
                 loss = calc_loss(y_hat, y)
+
+                _run.log_scalar("valid.loss", loss.item())
                 total_loss_valid += loss.item()
     
         # save every now and then
         if epoch % ckpt_interval == 0:
-            model.save_ckpt(file_name="lstm_snapshot_{}.pth".format(epoch))
+            model.save_ckpt(file_name=ckpt_dir / "model_ckpt_{}.pth".format(epoch))
 
         # save current best model (on validation dataset)
         new_best = False
         if total_loss_valid < best_total_loss:
             best_total_loss = total_loss_valid
             new_best = True
-            model.save_ckpt(file_name="lstm_best.pth")
+            model.save_ckpt(file_name=ckpt_dir / "model_ckpt_best.pth")
 
-        print("\nLoss (train/valid): {:.5f} / {:.5f}{}".format(total_loss_train,
+        print("\n{:4d}. epoch loss (train/valid): {:.5f} / {:.5f}{}".format(epoch, total_loss_train,
             total_loss_valid,
             " *NEW BEST MODEL*" if new_best else ""))
     
-    model.save_ckpt(file_name="lstm_finished.pth")
+    model.save_ckpt(file_name=ckpt_dir / "model_ckpt_finished.pth")
 
 
 @ex.config
