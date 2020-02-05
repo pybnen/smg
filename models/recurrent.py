@@ -38,6 +38,23 @@ class RecurrentSMG(nn.Module):
         # x.size() == [batch_size, out_seq_length, n_instruments, n_pitches]
         return x.view(batch_size, self.out_seq_length, n_instruments, self.n_pitches)
 
+    def create_ckpt(self):
+        is_training = self.training
+        # set to train, not sure if needed, saw in forum post
+        # https://discuss.pytorch.org/t/loading-a-saved-model-for-continue-training/17244/2
+        if not is_training:
+            self.train()
+
+        ckpt = {}
+        ckpt['state'] = self.state_dict()
+        ckpt['kwargs'] = self.kwargs
+        
+        # set back to previous state
+        if not is_training:
+            self.eval()
+        
+        return ckpt
+
     def save_ckpt(self, file_name, info=None):
         ckpt = {}
         if info is not None:
@@ -50,10 +67,12 @@ class RecurrentSMG(nn.Module):
     @classmethod
     def load_from_ckpt(clazz, ckpt_file, device=None):
         ckpt  = torch.load(ckpt_file, map_location=device)
-        model = clazz(**ckpt['kwargs'])
-        model.load_state_dict(ckpt['state'])
+        
+        model_ckpt = ckpt['model']
+        model = clazz(**model_ckpt['kwargs'])
+        model.load_state_dict(model_ckpt['state'])
 
-        return model, ckpt.pop('info', None)
+        return model
 
 
 if __name__ == "__main__":

@@ -72,6 +72,7 @@ def get_model(hidden_size, num_layers, out_seq_length, instruments, n_pitches):
     }
     return RecurrentSMG(**kwargs)
 
+
 @ex.capture
 def get_checkpoint_dir(_run):
     ckpt_dir = ""
@@ -81,17 +82,50 @@ def get_checkpoint_dir(_run):
     return ckpt_dir
 
 
+def save_checkpoint(file_name, epoch, model, optimizer):
+    """Save current training state"""
+
+    ckpt = {
+        'epoch': epoch,
+        'model': model.create_ckpt(),
+        'optimizer': optimizer.state_dict()
+    }
+    torch.save(ckpt, file_name)
+
+
 @ex.capture
-def run(model, dl_train, dl_valid, dev, _run, num_epochs=10, lr=1e-2):
+def load_checkpoint(model, optimizer, _run, checkpoint, device=None):
+    # add checkpoint file to resources and open it
+    with _run.open_resource(checkpoint, mode='rb') as f:
+        ckpt = torch.load(f, map_location=device)
+
+        # assert model params are equal and load state dict
+        assert(model.kwargs == ckpt['model']['kwargs'])
+        model.load_state_dict(ckpt['model']['state'])
+
+        # load state dict of optimizer
+        optimizer.load_state_dict(ckpt['optimizer'])
+
+    return ckpt['epoch']
+
+    
+@ex.capture
+def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr=1e-2):
     ckpt_dir = get_checkpoint_dir()
 
-    opt = optim.Adam(model.parameters(), lr=lr)
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+        
+    epoch = 0
+    if checkpoint is not None:
+        epoch = load_checkpoint(model, optimizer, device=dev)
+        print("Load checkpoint from '{}' trained for {} epoch(s).".format(checkpoint, epoch))
+
     calc_loss = nn.MSELoss()
 
     ckpt_interval = num_epochs // 10 if num_epochs > 10 else 5
     best_total_loss = float('inf')
 
-    for epoch in range(1, num_epochs+1):
+    for epoch in range(epoch + 1, num_epochs+1):
         # train model for one epoch
         model.train()
         total_loss_train = 0.0
@@ -100,11 +134,11 @@ def run(model, dl_train, dl_valid, dev, _run, num_epochs=10, lr=1e-2):
             for step, (x, y) in enumerate(dl_train):
                 x, y = x.to(dev), y.to(dev)
                 
-                opt.zero_grad()
+                optimizer.zero_grad()
                 y_hat = model.forward(x)
                 loss = calc_loss(y_hat, y)
                 loss.backward()
-                opt.step()
+                optimizer.step()
                 
                 _run.log_scalar("train.loss", loss.item())
                 total_loss_train += loss.item()
@@ -129,24 +163,23 @@ def run(model, dl_train, dl_valid, dev, _run, num_epochs=10, lr=1e-2):
 
                 _run.log_scalar("valid.loss", loss.item())
                 total_loss_valid += loss.item()
-    
+
         # save every now and then
         if epoch % ckpt_interval == 0:
-            model.save_ckpt(file_name=ckpt_dir / "model_ckpt_{}.pth".format(epoch))
+            save_checkpoint(str(ckpt_dir / "model_ckpt_{}.pth".format(epoch)), epoch, model, optimizer)
 
         # save current best model (on validation dataset)
         new_best = False
         if total_loss_valid < best_total_loss:
             best_total_loss = total_loss_valid
             new_best = True
-            model.save_ckpt(file_name=ckpt_dir / "model_ckpt_best.pth")
+            save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, optimizer)
 
-        print("\n{:4d}. epoch loss (train/valid): {:.5f} / {:.5f}{}".format(epoch, total_loss_train,
+        print("\n---- {:4d}. epoch loss (train/valid): {:.5f} / {:.5f}{} ----".format(epoch, total_loss_train,
             total_loss_valid,
             " *NEW BEST MODEL*" if new_best else ""))
     
-    model.save_ckpt(file_name=ckpt_dir / "model_ckpt_finished.pth")
-
+    save_checkpoint(str(ckpt_dir / "model_ckpt_finished.pth"), epoch, model, optimizer)
 
 @ex.config
 def config():
@@ -189,7 +222,10 @@ def config():
     in_seq_length = beat_resolution * beats_per_measure * measures_per_sample
     step_size = beat_resolution * beats_per_measure
     out_seq_length = 1
-    
+
+    # path to checkpoint file to continue training
+    checkpoint = None
+
 
 @ex.automain
 def main():
