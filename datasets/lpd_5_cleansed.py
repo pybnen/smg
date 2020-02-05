@@ -58,7 +58,6 @@ class LPD5Cleansed(Dataset):
         
         self.names = []
         self.samples = []
-        self.sample_lengths = []
         self.n_sequences = []
         self.__load_data_into_memory__()
 
@@ -110,10 +109,8 @@ class LPD5Cleansed(Dataset):
             self.samples.append((stacked.shape, i, v))
 
             sample_length = multitrack_roll.get_max_length()
-            self.sample_lengths.append(sample_length)
             n_sequences.append(self.calc_num_sequences(sample_length))
 
-        self.cum_sample_lengths = np.cumsum(self.sample_lengths)
         self.cum_n_sequences = np.cumsum(n_sequences)
         self.total_n_sequences = self.cum_n_sequences[-1]
 
