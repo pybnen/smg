@@ -28,9 +28,46 @@ def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
     )
     return data_loader
 
+@ex.capture
+def get_datasets(data_obj_file):
+    instruments = list(instruments)
+
+    if data_obj_file is None:
+        dataset = get_dataset_from_dir()
+        return dataset_train_valid_split(dataset)
+    else:
+        import pickle
+
+        with open(str(data_obj_file), 'rb') as f:
+            data_obj = pickle.load(f)
+        
+        ds_train = get_dataset_from_obj(data_obj, 'train')
+        ds_valid = get_dataset_from_obj(data_obj, 'valid', step_size=12)
+
+        return ds_train, ds_valid
+
 
 @ex.capture
-def get_dataset(data_dir, lowest_pitch, n_pitches, beat_resolution, in_seq_length, out_seq_length, step_size, instruments):
+def get_dataset_from_obj(data_obj, phase, lowest_pitch, n_pitches, beat_resolution, in_seq_length, out_seq_length, step_size, instruments):
+    instruments = list(instruments)
+
+    assert(data_obj['lowest_pitch'] == lowest_pitch)
+    assert(data_obj['n_pitches'] == n_pitches)
+    assert(data_obj['beat_resolution'] == beat_resolution)
+    assert(data_obj['instruments'] == instruments)
+    
+    phase_obj = dict(data_obj, **{'samples': data_obj['samples'][phase], 'names': data_obj['names'][phase]})
+    kwargs = {
+        "data_obj": phase_obj,
+        "in_seq_length": in_seq_length,
+        "out_seq_length": out_seq_length,
+        "step_size": step_size,
+    }
+    return LPD5Cleansed(**kwargs)
+
+
+@ex.capture
+def get_dataset_from_dir(data_dir, lowest_pitch, n_pitches, beat_resolution, in_seq_length, out_seq_length, step_size, instruments):
     instruments = list(instruments)
     kwargs = {
         "data_dir": data_dir, 
@@ -188,6 +225,7 @@ def config():
     n_workers = 0
 
     # dataset config
+    data_obj_file = None # "../data/lpd_5_subsets/4_24_72_piano/lpd_5_subset_10"
     data_dir = "../data/examples" # #"../../../data/lpd_5"
     valid_split = 0.3
 
@@ -229,8 +267,8 @@ def config():
 
 @ex.automain
 def main():
-    dataset = get_dataset()
-    ds_train, ds_valid = dataset_train_valid_split(dataset)
+    ds_train, ds_valid = get_datasets()
+
     dl_train = get_data_loader(ds_train, shuffle=True)
     dl_valid = get_data_loader(ds_valid, shuffle=False)
 

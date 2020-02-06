@@ -35,31 +35,50 @@ class LPD5Cleansed(Dataset):
     N_INSTRUMENTS = 5
     DEFAULT_BEAT_RESOLUTION = 24
 
-    def __init__(self, data_dir, in_seq_length, out_seq_length, step_size, lowest_pitch, n_pitches, beat_resolution, **kwargs):
+    def __init__(self, **kwargs):
         '''
-        :param data_dir: root of dataset
-        TODO describe other params
+        TODO describe kwargs
         '''
         super().__init__()
 
-        self.data_dir = data_dir
-        
-        self.seq_length = in_seq_length + out_seq_length
-        self.in_seq_length = in_seq_length
-        self.out_seq_length = out_seq_length
-        self.step_size = step_size
+        self.data_dir = kwargs.pop('data_dir', None)
+        data_obj = kwargs.pop('data_obj', None)
+        assert(self.data_dir is not None or data_obj is not None)
 
-        self.lowest_pitch = lowest_pitch
-        self.n_pitches = n_pitches
-        self.beat_resolution = beat_resolution
+        self.in_seq_length = kwargs.pop('in_seq_length')
+        self.out_seq_length = kwargs.pop('out_seq_length')
+        self.seq_length = self.in_seq_length + self.out_seq_length
+        self.step_size = kwargs.pop('step_size')
 
-        self.instruments = kwargs.pop('instruments')
-        self.instruments = [Instruments[inst.upper()] for inst in self.instruments]
-        
         self.names = []
         self.samples = []
         self.n_sequences = []
-        self.__load_data_into_memory__()
+
+        if data_obj is not None:
+            self.set_attributes(data_obj)
+            self.__load_data_obj__(data_obj)
+        else:
+            self.set_attributes(kwargs)
+            self.__load_data_into_memory__()
+
+    def set_attributes(self, attr_dict):
+        self.lowest_pitch = attr_dict['lowest_pitch']
+        self.n_pitches = attr_dict['n_pitches']
+        self.beat_resolution = attr_dict['beat_resolution']
+
+        self.instruments = attr_dict['instruments']
+        self.instruments = [Instruments[inst.upper()] for inst in self.instruments]
+        
+    def __load_data_obj__(self, data_obj):
+        self.names = data_obj['names']
+        self.samples = data_obj['samples']
+
+        n_sequences = [self.calc_num_sequences(sample[0][0]) for sample in data_obj['samples']]
+        self.cum_n_sequences = np.cumsum(n_sequences)
+        self.total_n_sequences = self.cum_n_sequences[-1]
+
+        print('Loaded {} samples with a total of {} sequences!'
+            .format(len(self.samples), self.total_n_sequences))
 
     def __load_data_into_memory__(self):
         # check if path exists
@@ -144,7 +163,13 @@ class LPD5Cleansed(Dataset):
 
 if __name__ == "__main__":
     import time
+    import sys
+    from pathlib import Path
     from smg.experiments.train_lstm import get_data_loader
+
+    samples_file = None
+    if len(sys.argv) > 1:
+        samples_file = Path(sys.argv[1])
 
     beat_resolution = 4
     beats_per_measure = 4
@@ -154,20 +179,40 @@ if __name__ == "__main__":
     step_size = beat_resolution * beats_per_measure
     out_seq_length = 1
 
-    instruments = ['drums', 'piano', 'guitar', 'bass', 'strings']
-    
-    # test dataset
-    kwargs = {
-        "data_dir": "../data/examples", # "../data/lpd_5",  
-        "lowest_pitch": 24,
-        "n_pitches": 72,
-        "beat_resolution": beat_resolution,
-        "in_seq_length": in_seq_length,
-        "out_seq_length": out_seq_length,
-        "step_size": step_size,
-        "instruments": instruments
-    }
-    ds = LPD5Cleansed(**kwargs)
+    if samples_file is None or not samples_file.is_file():
+        
+        instruments = ['drums', 'piano', 'guitar', 'bass', 'strings']
+        
+        # test dataset
+        kwargs = {
+            "data_dir": "../data/examples", # "../data/lpd_5",  
+            "lowest_pitch": 24,
+            "n_pitches": 72,
+            "beat_resolution": beat_resolution,
+            "in_seq_length": in_seq_length,
+            "out_seq_length": out_seq_length,
+            "step_size": step_size,
+            "instruments": instruments
+        }
+        ds = LPD5Cleansed(**kwargs)
+
+    else:
+        import pickle
+        with open(str(samples_file), 'rb') as f:
+            data_obj = pickle.load(f)
+
+        train_obj = dict(data_obj, **{'samples': data_obj['samples']['train'],
+                                    'names': data_obj['names']['train']})
+
+        kwargs = {
+            "data_dir": "../data/examples", # "../data/lpd_5",  
+            "data_obj": train_obj,
+            "beat_resolution": beat_resolution,
+            "in_seq_length": in_seq_length,
+            "out_seq_length": out_seq_length,
+            "step_size": step_size,
+        }
+        ds = LPD5Cleansed(**kwargs)
 
     #print("n_sequences = {}".format(ds.n_sequences))
     print("Dataset")
