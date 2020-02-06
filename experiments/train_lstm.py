@@ -30,8 +30,6 @@ def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
 
 @ex.capture
 def get_datasets(data_obj_file):
-    instruments = list(instruments)
-
     if data_obj_file is None:
         dataset = get_dataset_from_dir()
         return dataset_train_valid_split(dataset)
