@@ -29,7 +29,7 @@ def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
     return data_loader
 
 @ex.capture
-def get_datasets(data_obj_file):
+def get_datasets(data_obj_file, valid_step_size):
     if data_obj_file is None:
         dataset = get_dataset_from_dir()
         return dataset_train_valid_split(dataset)
@@ -40,7 +40,7 @@ def get_datasets(data_obj_file):
             data_obj = pickle.load(f)
         
         ds_train = get_dataset_from_obj(data_obj, 'train')
-        ds_valid = get_dataset_from_obj(data_obj, 'valid', step_size=12)
+        ds_valid = get_dataset_from_obj(data_obj, 'valid', step_size=valid_step_size)
 
         return ds_train, ds_valid
 
@@ -258,6 +258,8 @@ def config():
     in_seq_length = beat_resolution * beats_per_measure * measures_per_sample
     step_size = beat_resolution * beats_per_measure
     out_seq_length = 1
+    # step size for validation dataset
+    valid_step_size = beat_resolution * beats_per_measure
 
     # path to checkpoint file to continue training
     checkpoint = None
