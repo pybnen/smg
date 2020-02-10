@@ -7,15 +7,22 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import Subset
+from datetime import datetime
+
 from smg.datasets.lpd_5_cleansed import LPD5Cleansed
 from smg.models.recurrent import RecurrentSMG
+from smg.common.loggers import CompositeLogger, TensorBoardLogger, SacredLogger
+from smg.common.generate_music import generate_pianoroll
 
 
-pbar_update_interval = 100
-
+# create experiment
 ex = Experiment('train_lstm')
-
 ex.captured_out_filter = lambda captured_output: "Output capturing turned off."
+
+# global variables
+pbar_update_interval = 100
+loggers = CompositeLogger()
+
 
 @ex.capture
 def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
@@ -27,6 +34,7 @@ def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
         shuffle=shuffle
     )
     return data_loader
+
 
 @ex.capture
 def get_datasets(data_obj_file, valid_step_size):
@@ -157,9 +165,15 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
 
     calc_loss = nn.MSELoss()
 
-    ckpt_interval = num_epochs // 10 if num_epochs > 10 else 5
+    audio_interval = 1 # num_epochs // 10 if num_epochs > 10 else 5
     best_total_loss = float('inf')
 
+    # save dataload size to later visualize epochs
+    loggers.add_scalar("train.size", len(dl_train), 0)
+    loggers.add_scalar("valid.size", len(dl_valid), 0)
+
+    train_step = 0
+    valid_step = 0
     for epoch in range(epoch + 1, num_epochs+1):
         # train model for one epoch
         model.train()
@@ -175,13 +189,15 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
                 loss.backward()
                 optimizer.step()
                 
-                _run.log_scalar("train.loss", loss.item())
+                #_run.log_scalar("train.loss", loss.item())
+                loggers.add_scalar("train.loss", loss.item(), train_step)
                 total_loss_train += loss.item()
-                
                 
                 if (step + 1) % pbar_update_interval == 0:
                     pbar.set_postfix(loss=loss.item())
                     pbar.update(pbar_update_interval)
+                
+                train_step += 1
             
             # update the rest
             pbar.update((step + 1) % pbar_update_interval)
@@ -196,12 +212,14 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
                 y_hat = model.forward(x)
                 loss = calc_loss(y_hat, y)
 
-                _run.log_scalar("valid.loss", loss.item())
+                # _run.log_scalar("valid.loss", loss.item())
+                loggers.add_scalar("valid.loss", loss.item(), valid_step)
                 total_loss_valid += loss.item()
 
-        # save every now and then
-        if epoch % ckpt_interval == 0:
-            save_checkpoint(str(ckpt_dir / "model_ckpt_{}.pth".format(epoch)), epoch, model, optimizer)
+                valid_step += 1
+
+        # create a checkpoint of current train state
+        save_checkpoint(str(ckpt_dir / "model_ckpt.pth"), epoch, model, optimizer)
 
         # save current best model (on validation dataset)
         new_best = False
@@ -213,8 +231,21 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
         print("\n---- {:4d}. epoch loss (train/valid): {:.5f} / {:.5f}{} ----".format(epoch, total_loss_train,
             total_loss_valid,
             " *NEW BEST MODEL*" if new_best else ""))
+
+        # every now and then create a sample audio file
+        if epoch % audio_interval == 0:
+            for phase, data_loader in zip(['train', 'valid'], [dl_train, dl_valid]):
+                x, _ = data_loader.dataset[np.random.choice(len(data_loader.dataset))]
+                x = torch.tensor(x).unsqueeze(0).to(dev)
+                # y = torch.tensor(y).unsqueeze(0).to(dev)
+
+                pianoroll = generate_pianoroll(model, x, x.size(1) * 3)
+                loggers.add_pianoroll_img("{}.sample".format(phase), pianoroll, epoch)
+                loggers.add_pianoroll_audio("{}.sample".format(phase), pianoroll, epoch)
+
     
     save_checkpoint(str(ckpt_dir / "model_ckpt_finished.pth"), epoch, model, optimizer)
+
 
 @ex.config
 def config():
@@ -260,13 +291,17 @@ def config():
     out_seq_length = 1
     # step size for validation dataset
     valid_step_size = beat_resolution * beats_per_measure
+    # step size for validation dataset
+    valid_step_size = beat_resolution * beats_per_measure
 
     # path to checkpoint file to continue training
     checkpoint = None
 
 
 @ex.automain
-def main():
+def main(_run, instruments, lowest_pitch, n_pitches, beat_resolution):
+    instruments = list(instruments)
+
     ds_train, ds_valid = get_datasets()
 
     dl_train = get_data_loader(ds_train, shuffle=True)
@@ -275,6 +310,18 @@ def main():
     dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     model = get_model()
+    log_dir = "../runs/tensorboard_log/" + str(datetime.timestamp(datetime.now()))
+    if len(_run.observers) > 0 and isinstance(_run.observers[0], FileStorageObserver):
+        log_dir = Path(_run.observers[0].dir + "/tensorboard_log")
+
+    loggers.add(TensorBoardLogger(log_dir=log_dir, track_info={
+        "instruments": instruments,
+        "lowest_pitch": lowest_pitch, 
+        "n_pitches": n_pitches, 
+        "beat_resolution": beat_resolution
+    }))
+    loggers.add(SacredLogger(ex, _run))
+
     model = model.to(dev)
 
     run(model, dl_train, dl_valid, dev)
