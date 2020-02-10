@@ -22,7 +22,7 @@ def generate_pianoroll(model, stub, total_length, input_length=None, one_pitch_p
             # slide stub
             # stub = generated_seq[:, -input_length:, :, :]
         
-    pianoroll = generated_seq.detach().view(-1, generated_seq.shape[-1])
+    pianoroll = generated_seq.detach().cpu().view(-1, generated_seq.shape[-1])
 
     if one_pitch_per_sample:
         # generate a pianoroll with zeros except for the max values of the generated sequence
