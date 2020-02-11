@@ -165,7 +165,7 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
 
     calc_loss = nn.MSELoss()
 
-    audio_interval = 1 # num_epochs // 10 if num_epochs > 10 else 5
+    audio_interval = 2 # num_epochs // 10 if num_epochs > 10 else 5
     best_total_loss = float('inf')
 
     # save dataload size to later visualize epochs
@@ -239,9 +239,11 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
                 x = torch.tensor(x).unsqueeze(0).to(dev)
                 # y = torch.tensor(y).unsqueeze(0).to(dev)
 
-                pianoroll = generate_pianoroll(model, x, x.size(1) * 3)
+                pianoroll = generate_pianoroll(model, x, x.size(1) * 2)
                 loggers.add_pianoroll_img("{}.sample".format(phase), pianoroll, epoch)
-                loggers.add_pianoroll_audio("{}.sample".format(phase), pianoroll, epoch)
+                # do not log audio for now as this cost quite some time and the result
+                # is not good right know
+                #loggers.add_pianoroll_audio("{}.sample".format(phase), pianoroll, epoch)
 
     
     save_checkpoint(str(ckpt_dir / "model_ckpt_finished.pth"), epoch, model, optimizer)
