@@ -103,12 +103,14 @@ def dataset_train_valid_split(dataset, valid_split):
 
 
 @ex.capture
-def get_model(hidden_size, num_layers, out_seq_length, instruments, n_pitches):
+def get_model(hidden_size, num_layers, out_seq_length, dense_layer_hiddens, instruments, n_pitches):
     instruments = list(instruments)
+    dense_layer_hiddens = list(dense_layer_hiddens)
 
     kwargs = {
         "hidden_size": hidden_size,
         "num_layers": num_layers,
+        "dense_layer_hiddens": dense_layer_hiddens,
         "out_seq_length": out_seq_length, # part of out features
         "instruments": instruments, # part of out features
         "n_pitches": n_pitches, # part of out features
@@ -263,6 +265,7 @@ def config():
     # model configs
     hidden_size = 200
     num_layers = 3
+    dense_layer_hiddens = []
 
     # train configs
     num_epochs = 10

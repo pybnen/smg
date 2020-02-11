@@ -14,17 +14,34 @@ class RecurrentSMG(nn.Module):
         self.n_instruments = len(self.instruments)
         self.out_seq_length = kwargs.pop('out_seq_length')
 
-
-        self.input_size = self.n_pitches * self.n_instruments
+        # lstm
         self.hidden_size = kwargs.pop('hidden_size')
         self.num_layers = kwargs.pop('num_layers', 1)
         self.dropout = kwargs.pop('dropout', 0)
+
+        # dense layer
+        self.dense_layer_hiddens = kwargs.pop('dense_layer_hiddens')
+
+        in_features = self.n_pitches * self.n_instruments
+        out_features = self.out_seq_length * self.n_instruments * self.n_pitches
         
-        self.lstm0 = nn.LSTM(self.input_size, self.hidden_size,
+        self.lstm0 = nn.LSTM(in_features, self.hidden_size,
             num_layers=self.num_layers, dropout=self.dropout)
 
-        self.dense = nn.Linear(self.hidden_size, self.out_seq_length * self.n_instruments * self.n_pitches)
 
+        dense_layer_sizes = [self.hidden_size, *self.dense_layer_hiddens, out_features]
+        dense_layers = []
+        dense_in = dense_layer_sizes[0]
+        for i in range(1, len(dense_layer_sizes)):
+            # add relu activation between layers
+            if len(dense_layers) > 0:
+                dense_layers.append(nn.ReLU())
+            
+            dense_out = dense_layer_sizes[i]
+            dense_layers.append(nn.Linear(dense_in, dense_out))
+            dense_in = dense_out
+        self.dense = nn.Sequential(*dense_layers)
+        
 
     def forward(self, x):
         # x.size() == [batch_size, in_seq_length, n_instruments, n_pitches]
@@ -55,15 +72,6 @@ class RecurrentSMG(nn.Module):
         
         return ckpt
 
-    def save_ckpt(self, file_name, info=None):
-        ckpt = {}
-        if info is not None:
-            ckpt['info'] = info
-        ckpt['state'] = self.state_dict()
-        ckpt['kwargs'] = self.kwargs
-
-        torch.save(ckpt, file_name)
-
     @classmethod
     def load_from_ckpt(clazz, ckpt_file, device=None):
         ckpt  = torch.load(ckpt_file, map_location=device)
@@ -76,7 +84,9 @@ class RecurrentSMG(nn.Module):
 
 
 if __name__ == "__main__":
-    save = True
+    import sys
+
+    load_model = len(sys.argv) == 2 and sys.argv[1] == 'load'
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -86,15 +96,15 @@ if __name__ == "__main__":
 
     in_seq_length = beat_resolution * beats_per_measure * measures_per_sample
     
-    if save:
-
+    if not load_model:
         step_size = beat_resolution * beats_per_measure
-        out_seq_length = 1
-        instruments = ['piano', 'drums']
+        out_seq_length = 16
+        instruments = ['piano']
         n_pitches = 72
 
         kwargs = {
             "hidden_size": 200,
+            "dense_layer_hiddens": [],
             "num_layers": 1,
             "out_seq_length": out_seq_length, # part of out features
             "instruments": instruments, # part of out features
@@ -103,11 +113,9 @@ if __name__ == "__main__":
 
         model =  RecurrentSMG(**kwargs)
     else:
-        model, info = RecurrentSMG.load_from_ckpt('ckpt_test.pth')
+        model = RecurrentSMG.load_from_ckpt('ckpt_test.pth')
         n_pitches = model.n_pitches
 
-        print("info", info)
-    
     model = model.to(dev)
 
     batch_size = 8
@@ -115,8 +123,10 @@ if __name__ == "__main__":
     seq = torch.rand((batch_size, in_seq_length, n_instruments, n_pitches))
 
     pred = model.forward(seq)
+    print(model)
     print("input size:".ljust(15), seq.size())
     print("output size:".ljust(15), pred.size())
 
-    if save:
-        model.save_ckpt('ckpt_test.pth', {'in_seq_length': in_seq_length})
+    if not load_model:
+        ckpt = model.create_ckpt()
+        torch.save({'model': ckpt}, 'ckpt_test.pth')
