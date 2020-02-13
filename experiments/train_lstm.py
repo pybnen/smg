@@ -21,8 +21,6 @@ ex.captured_out_filter = lambda captured_output: "Output capturing turned off."
 
 # global variables
 pbar_update_interval = 100
-loggers = CompositeLogger()
-
 
 @ex.capture
 def get_data_loader(dataset, batch_size, n_workers=4, shuffle=True):
@@ -155,7 +153,7 @@ def load_checkpoint(model, optimizer, _run, checkpoint, device=None):
 
     
 @ex.capture
-def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr=1e-2):
+def run(model, dl_train, dl_valid, dev, _run, logger, checkpoint=None, num_epochs=10, lr=1e-2):
     ckpt_dir = get_checkpoint_dir()
 
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -171,8 +169,8 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
     best_total_loss = float('inf')
 
     # save dataload size to later visualize epochs
-    loggers.add_scalar("train.size", len(dl_train), 0)
-    loggers.add_scalar("valid.size", len(dl_valid), 0)
+    logger.add_scalar("train.size", len(dl_train), 0)
+    logger.add_scalar("valid.size", len(dl_valid), 0)
 
     train_step = 0
     valid_step = 0
@@ -192,7 +190,7 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
                 optimizer.step()
                 
                 #_run.log_scalar("train.loss", loss.item())
-                loggers.add_scalar("train.loss", loss.item(), train_step)
+                logger.add_scalar("train.loss", loss.item(), train_step)
                 total_loss_train += loss.item()
                 
                 if (step + 1) % pbar_update_interval == 0:
@@ -215,7 +213,7 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
                 loss = calc_loss(y_hat, y)
 
                 # _run.log_scalar("valid.loss", loss.item())
-                loggers.add_scalar("valid.loss", loss.item(), valid_step)
+                logger.add_scalar("valid.loss", loss.item(), valid_step)
                 total_loss_valid += loss.item()
 
                 valid_step += 1
@@ -242,13 +240,14 @@ def run(model, dl_train, dl_valid, dev, _run, checkpoint=None, num_epochs=10, lr
                 # y = torch.tensor(y).unsqueeze(0).to(dev)
 
                 pianoroll = generate_pianoroll(model, x, x.size(1) * 2)
-                loggers.add_pianoroll_img("{}.sample".format(phase), pianoroll, epoch)
+                logger.add_pianoroll_img("{}.sample".format(phase), pianoroll, epoch)
                 # do not log audio for now as this cost quite some time and the result
                 # is not good right know
-                #loggers.add_pianoroll_audio("{}.sample".format(phase), pianoroll, epoch)
+                #logger.add_pianoroll_audio("{}.sample".format(phase), pianoroll, epoch)
 
     
     save_checkpoint(str(ckpt_dir / "model_ckpt_finished.pth"), epoch, model, optimizer)
+    logger.close()
 
 
 @ex.config
@@ -319,14 +318,15 @@ def main(_run, instruments, lowest_pitch, n_pitches, beat_resolution):
     if len(_run.observers) > 0 and isinstance(_run.observers[0], FileStorageObserver):
         log_dir = Path(_run.observers[0].dir + "/tensorboard_log")
 
-    loggers.add(TensorBoardLogger(log_dir=log_dir, track_info={
+    logger = CompositeLogger()
+    logger.add(TensorBoardLogger(log_dir=log_dir, track_info={
         "instruments": instruments,
         "lowest_pitch": lowest_pitch, 
         "n_pitches": n_pitches, 
         "beat_resolution": beat_resolution
     }))
-    loggers.add(SacredLogger(ex, _run))
+    logger.add(SacredLogger(ex, _run))
 
     model = model.to(dev)
 
-    run(model, dl_train, dl_valid, dev)
+    run(model, dl_train, dl_valid, dev, logger=logger)
