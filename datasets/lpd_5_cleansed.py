@@ -101,8 +101,6 @@ class LPD5Cleansed(Dataset):
         for f in tqdm(files):
             multitrack_roll = pp.load(str(f))
 
-            self.names.append(multitrack_roll.name)
-
             # not sure what role downbeats play, but all samples in the lpd5 cleansed dataset
             # contain only one downbeat at the beginning, so I check for that, just in case.
             assert(np.all(multitrack_roll.get_downbeat_steps() == [0]))
@@ -121,14 +119,18 @@ class LPD5Cleansed(Dataset):
             assert(stacked.shape[1] == self.__class__.N_INSTRUMENTS)
 
             stacked = stacked[:, [inst.value for inst in self.instruments], self.lowest_pitch:self.lowest_pitch + self.n_pitches]
-            i = np.where(stacked > 0)
-            # map values from [0, 127] to [0, 1]
-            v = stacked[i] / 127
-            
-            self.samples.append((stacked.shape, i, v))
 
-            sample_length = multitrack_roll.get_max_length()
-            n_sequences.append(self.calc_num_sequences(sample_length))
+            # only add samples if not empty
+            if not np.all(stacked == 0):
+                i = np.where(stacked > 0)
+                # map values from [0, 127] to [0, 1]
+                v = stacked[i] / 127
+                        
+                self.names.append(multitrack_roll.name)
+                self.samples.append((stacked.shape, i, v))
+
+                sample_length = multitrack_roll.get_max_length()
+                n_sequences.append(self.calc_num_sequences(sample_length))
 
         self.cum_n_sequences = np.cumsum(n_sequences)
         self.total_n_sequences = self.cum_n_sequences[-1]
