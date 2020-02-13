@@ -14,10 +14,21 @@ from smg.models.recurrent import RecurrentSMG
 from smg.common.loggers import CompositeLogger, TensorBoardLogger, SacredLogger
 from smg.common.generate_music import generate_pianoroll
 
+from sacred import SETTINGS
+from sacred.utils import apply_backspaces_and_linefeeds
+
+# to quick fix output capture of
+# progressbar: https://github.com/IDSIA/sacred/issues/440#issuecomment-492726448
+
+# a PR is open to fix this issue, maybe check later if commited to master
+# https://github.com/IDSIA/sacred/issues/673
+SETTINGS.CAPTURE_MODE = 'sys'
 
 # create experiment
 ex = Experiment('train_lstm')
-ex.captured_out_filter = lambda captured_output: "Output capturing turned off."
+
+# ex.captured_out_filter = lambda captured_output: "Output capturing turned off."
+ex.captured_out_filter = apply_backspaces_and_linefeeds
 
 # global variables
 pbar_update_interval = 100
