@@ -14,10 +14,12 @@ sacred
 
 ### LSTM network
 
-> `python -m smg.experiments.train_lstm`
+> `python -m smg.experiments.train_lstm -F logdir`
 
 Use `sacred` commands to print or change configuration ([Sacred Docs: Command-Line Interface](https://sacred.readthedocs.io/en/stable/command_line.html)).  
-Or change the `configs/config.json` to overwrite configs, which might be more convenient then using the commandline.
+Or change the `configs/config.json` to overwrite configs, which might be more convenient then using the commandline.  
+
+`-F logdir` Creates a file observer at logdir  
 
 #### Configs
 
