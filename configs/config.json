@@ -1,0 +1,11 @@
+{
+    "data_obj_file": "../data/lpd_5_subsets/4_24_72_piano/lpd_5_subset_10",
+    "num_epochs": 20,
+    "batch_size": 1048,
+    "hidden_size": 2048,
+    "dense_layer_hiddens": [1024],
+    "num_layers": 2,
+    "out_seq_length": 16,
+    "lr": 1e-3,
+    "n_workers": 8
+}

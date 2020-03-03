@@ -256,29 +256,40 @@ def run(model, dl_train, dl_valid, dev, _run, logger, checkpoint=None, num_epoch
                 # is not good right know
                 #logger.add_pianoroll_audio("{}.sample".format(phase), pianoroll, epoch)
 
-    
     save_checkpoint(str(ckpt_dir / "model_ckpt_finished.pth"), epoch, model, optimizer)
     logger.close()
 
 
 @ex.config
 def config():
-    # data_loader config
     batch_size = 8
     n_workers = 0
 
     # dataset config
-    data_obj_file = None # "../data/lpd_5_subsets/4_24_72_piano/lpd_5_subset_10"
-    data_dir = "../data/examples" # #"../../../data/lpd_5"
+
+    # load dataset from a pregenerate data obj file (use either data_obj_file or data_dir)
+    data_obj_file = None
+
+    # load dataset from directory (use either data_obj_file or data_dir)
+    data_dir = "../data/examples"
+    
+    # split ratio of train and valid set (applies only when data_dir option is used)
     valid_split = 0.3
 
     # model configs
+
+    # hidden size of lstm layer
     hidden_size = 200
+    # number of stacked lstms
     num_layers = 3
+    # additional hidden layers for feedforward network, list of hidden size
     dense_layer_hiddens = []
 
     # train configs
+
+    # number of epochs
     num_epochs = 10
+    # learning rate
     lr = 1e-3
 
     # general configs
@@ -292,25 +303,33 @@ def config():
     # This sucks and is definitely a drawback of the sacred magic, as I was not
     # expecting a list to be suddenly a differnt type. 
 
-    # instruments = ['drums', 'piano', 'guitar', 'bass', 'strings']
+    # list of instrument tracks to be used (available 'drums', 'piano', 'guitar', 'bass', 'strings')
     instruments = ['piano'] 
+    # lowest pitch to be used
     lowest_pitch = 24
+    # pitch range
     n_pitches = 72
     beat_resolution = 4
 
     measures_per_sample = 4
     beats_per_measure = 4
 
-    in_seq_length = beat_resolution * beats_per_measure * measures_per_sample
+    in_seq_length = beat_resolution * beats_per_measure * measures_per_sample # sequence length of one input
+    # step size of train dataset (and of validation dataset if data_dir option is used)
     step_size = beat_resolution * beats_per_measure
-    out_seq_length = 1
-    # step size for validation dataset
-    valid_step_size = beat_resolution * beats_per_measure
-    # step size for validation dataset
+    out_seq_length = 1  # output length of prediction
+    # step size for validation dataset (applies only if  data_obj_file is used)
     valid_step_size = beat_resolution * beats_per_measure
 
     # path to checkpoint file to continue training
     checkpoint = None
+
+
+@ex.config
+def config_file():
+    # use config to overwrite configurations for convenience
+    # instead of commandline params
+    ex.add_config('smg/configs/config.json') 
 
 
 @ex.automain

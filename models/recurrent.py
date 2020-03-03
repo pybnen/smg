@@ -42,7 +42,6 @@ class RecurrentSMG(nn.Module):
             dense_in = dense_out
         self.dense = nn.Sequential(*dense_layers)
         
-
     def forward(self, x):
         # x.size() == [batch_size, in_seq_length, n_instruments, n_pitches]
         batch_size, seq_length, n_instruments, n_pitches = x.size()
