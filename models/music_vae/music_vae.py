@@ -4,10 +4,11 @@ import torch.nn as nn
 
 class MusicVAE(nn.Module):
 
-    def __init__(self, encoder: nn.Module, decoder: nn.Module) -> None:
+    def __init__(self, encoder: nn.Module, decoder: nn.Module, teacher_forcing=True):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
+        self.teacher_forcing = teacher_forcing
 
     def encode(self, x):
         return self.encoder(x)
@@ -17,15 +18,19 @@ class MusicVAE(nn.Module):
         eps = torch.randn_like(sigma)
         return mu + eps * sigma
 
-    def decode(self, z, seq_len):
-        return self.decoder(z, seq_len)
+    def decode(self, z, seq_length=None, x=None):
+        assert(not self.teacher_forcing or x is not None)
+        assert(seq_length or x)
 
-    def forward(self, x, seq_len=None):
-        seq_len = seq_len or x.size(1)
+        return self.decoder(z, seq_length=seq_length, x=x)
+
+    def forward(self, x, seq_length=None):
+        seq_length = seq_length or x.size(1)
 
         mu, sigma = self.encode(x)
         z = self.reparameterize(mu, sigma)
-        x_hat = self.decoder(z, seq_len)
+
+        x_hat = self.decoder(z, seq_length=seq_length, x=x)
         return x_hat, mu, sigma
 
 

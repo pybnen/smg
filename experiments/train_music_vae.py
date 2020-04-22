@@ -113,13 +113,13 @@ def calc_loss(x_hat, mu, sigma, x, beta=1.0, free_bits=0):
     kl_cost = kl_div
     # kl_cost = torch.max(kl_div - free_nats, torch.tensor(0, dtype=kl_div.dtype))
 
-    n_steps = x_hat.size()[1]
+    n_steps = x_hat.size(1)
     r_loss = None
     for t in range(n_steps):
         if r_loss is None:
-            r_loss = F.cross_entropy(x_hat[:, t], x[:, t].squeeze(dim=-1).type(torch.LongTensor), reduction='sum')
+            r_loss = F.cross_entropy(x_hat[:, t], x[:, t].squeeze(dim=-1).type(dtype=torch.int64), reduction='sum')
         else:
-            r_loss += F.cross_entropy(x_hat[:, t], x[:, t].squeeze(dim=-1).type(torch.LongTensor), reduction='sum')
+            r_loss += F.cross_entropy(x_hat[:, t], x[:, t].squeeze(dim=-1).type(dtype=torch.int64), reduction='sum')
 
     elbo_loss = r_loss + beta * kl_cost
 
