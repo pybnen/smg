@@ -4,7 +4,7 @@ import torch.nn as nn
 
 class MusicVAE(nn.Module):
 
-    def __init__(self, encoder: nn.Module, decoder: nn.Module, teacher_forcing=True):
+    def __init__(self, encoder: nn.Module, decoder: nn.Module, teacher_forcing=False):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder

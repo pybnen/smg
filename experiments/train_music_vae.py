@@ -52,7 +52,7 @@ def save_interpolation(samples, file_path_without_suffix):
 
     _, samples = torch.max(samples.cpu(), dim=-1)
 
-    samples = melody_decode(samples).numpy().astype(np.int32)
+    samples = melody_decode(samples).cpu().numpy().astype(np.int32)
     pianorolls = []
     for sample in samples:
         pianorolls.append(melody_to_pianoroll(sample[:32]))
@@ -175,8 +175,11 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
                 # reconstruction
                 _, recon = torch.max(x_hat.cpu(), dim=-1)
                 for i, (orig_melody, recon_melody) in enumerate(zip(x, recon)):
-                    save_reconstruction(melody_decode(orig_melody.squeeze(dim=-1).numpy().astype(np.int8)),
-                                        melody_decode(recon_melody.numpy().astype(np.int8)),
+                    orig_melody = orig_melody.cpu().squeeze(dim=-1).numpy().astype(np.int8)
+                    recon_melody = recon_melody.cpu().numpy().astype(np.int8)
+
+                    save_reconstruction(melody_decode(orig_melody),
+                                        melody_decode(recon_melody),
                                         str(reconstruct_dir / "{}".format(i)))
 
                 # interpolate
@@ -229,7 +232,7 @@ def run(_run, batch_size, num_epochs, num_workers, learning_rate, z_size, melody
     }
     encoder = smg_encoder.BidirectionalLstmEncoder(**params)
     decoder = smg_decoder.LstmDecoder(130, params["z_size"], teacher_forcing=False)
-    model = MusicVAE(encoder=encoder, decoder=decoder)
+    model = MusicVAE(encoder=encoder, decoder=decoder, teacher_forcing=False)
 
     model = model.to(device)
 
@@ -262,7 +265,8 @@ def run(_run, batch_size, num_epochs, num_workers, learning_rate, z_size, melody
             sample = model.decode(z, melody_length).cpu()
             _, sample_argmax = torch.max(sample, dim=-1)
             for i, melody in enumerate(sample_argmax):
-                save_melody(melody_decode(melody.numpy().astype(np.int8)),
+                melody = melody.cpu().numpy().astype(np.int8)
+                save_melody(melody_decode(melody),
                             str(sample_epoch_dir / "sample_{}".format(i)))
 
 
