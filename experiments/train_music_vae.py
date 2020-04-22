@@ -39,8 +39,8 @@ def interpolate(model, start_melody, end_melody, num_steps, device):
 
     endpoints = torch.stack((start_melody, end_melody)).to(device)
     with torch.no_grad():
-        mu, log_var = model.encode(endpoints)
-        z = model.reparameterize(mu, log_var)  # maybe directly use mu
+        mu, sigma = model.encode(endpoints)
+        z = model.reparameterize(mu, sigma)  # maybe directly use mu
         z = torch.stack([_slerp(z[0], z[1], t)
                          for t in np.linspace(0, 1, num_steps)]).to(device)
 
@@ -102,9 +102,11 @@ def save_melody(melody, file_path_without_suffix):
     plt.close()
 
 
-def calc_loss(x_hat, mu, logvar, x, beta=1.0, free_bits=0):
+def calc_loss(x_hat, mu, sigma, x, beta=1.0, free_bits=0):
+    variance = sigma.pow(2)
+    log_variance = variance.log()
 
-    kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    kl_div = -0.5 * torch.sum(1 + log_variance - mu.pow(2) - variance)
 
     free_nats = free_bits * np.log(2.0)
     # TODO fix this
@@ -132,8 +134,8 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, device, log_inte
         x = x.to(device)
 
         opt.zero_grad()
-        x_hat, mu, logvar = model.forward(x)
-        loss, _, _, _ = loss_fn(x_hat, mu, logvar, x)
+        x_hat, mu, sigma = model.forward(x)
+        loss, _, _, _ = loss_fn(x_hat, mu, sigma, x)
         loss.backward()
         opt.step()
 
@@ -162,8 +164,8 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
     with torch.no_grad():
         for batch_idx, x in enumerate(data_loader):
             x = x.to(device)
-            x_hat, mu, logvar = model.forward(x)
-            loss, _, _, _ = loss_fn(x_hat, mu, logvar, x)
+            x_hat, mu, sigma = model.forward(x)
+            loss, _, _, _ = loss_fn(x_hat, mu, sigma, x)
 
             # TODO log all the losses
             eval_loss += loss.item()
@@ -245,10 +247,10 @@ def run(_run, batch_size, num_epochs, num_workers, learning_rate, z_size, melody
     for epoch in range(1, num_epochs+1):
         train_step = train(epoch, train_step, model, dl_train, calc_loss, opt, device, log_interval, logger)
         eval_step = evaluate(epoch, eval_step, model, dl_eval, calc_loss, device,
-                            reconstruct_dir,
-                            interpolate_dir,
-                            melody_decode,
-                            logger)
+                             reconstruct_dir,
+                             interpolate_dir,
+                             melody_decode,
+                             logger)
 
         # TODO log statistics
         with torch.no_grad():

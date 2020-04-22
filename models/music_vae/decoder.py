@@ -39,8 +39,8 @@ class LstmDecoder(nn.Module):
 
         # init hidden with latent vector
         h_t = z
-        c_t = torch.zeros_like(z)
-        x_t = torch.zeros((batch_size, self.sample_features))
+        c_t = torch.zeros_like(z, dtype=z.dtype)
+        x_t = torch.zeros((batch_size, self.sample_features), dtype=z.dtype)
 
         output = []
         for t in range(seq_length):
