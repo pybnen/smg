@@ -88,8 +88,9 @@ class TensorBoardLogger(Logger):
         path.mkdir(parents=True, exist_ok=True)
         self.log_dir = path
         self.writer = SummaryWriter(path)
-        self.track_info = kwargs['track_info']
-        self.generate_multitrack = partial(generate_multitrack, **self.track_info)
+        self.track_info = kwargs.get('track_info', None)
+        if self.track_info is not None:
+            self.generate_multitrack = partial(generate_multitrack, **self.track_info)
 
     def add_scalar(self, name, value, step):
         self.writer.add_scalar(name, value, global_step=step)
