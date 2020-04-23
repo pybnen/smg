@@ -224,6 +224,7 @@ def run(_run,
         encoder_params,
         decoder_params,
         music_vae_params):
+
     run_dir = get_run_dir()
     sample_dir = Path(run_dir) / "results/samples"
     sample_dir.mkdir(parents=True, exist_ok=True)

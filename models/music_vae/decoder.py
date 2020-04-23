@@ -14,18 +14,19 @@ class RandomDecoder(nn.Module):
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, sample_features, z_size, teacher_forcing=True):
+    def __init__(self, in_features, out_features, z_size, teacher_forcing=True):
         super().__init__()
 
-        self.sample_features = sample_features
+        self.in_features = in_features
+        self.out_features = out_features
         self.z_size = z_size
         self.teacher_forcing = teacher_forcing
 
         # TODO confirm that lstmcell in a loop yields the same
         #  result as an lstm layer, for teacher_forcing lstmlayer could be used for performance
         #  reasons
-        self.lstm_cell = nn.LSTMCell(self.sample_features, self.z_size, bias=True)
-        self.linear = nn.Linear(self.z_size, self.sample_features, bias=True)
+        self.lstm_cell = nn.LSTMCell(self.in_features, self.z_size, bias=True)
+        self.linear = nn.Linear(self.z_size, self.out_features, bias=True)
 
     def forward(self, z, seq_length=None, x=None):
         assert(not self.teacher_forcing or x is not None)
@@ -40,12 +41,16 @@ class LstmDecoder(nn.Module):
         # init hidden with latent vector
         h_t = z
         c_t = torch.zeros_like(z).type(z.type())
-        x_t = torch.zeros((batch_size, self.sample_features)).type(z.type())
+        x_t = torch.zeros((batch_size, self.in_features)).type(z.type())
 
         output = []
         for t in range(seq_length):
-            sample = x[:, t] if self.teacher_forcing else x_t
-            h_t, c_t = self.lstm_cell(sample, (h_t, c_t))
+            if self.teacher_forcing:
+                cur_input = x[:, t]
+            else:
+                cur_input = x_t.argmax(dim=-1).type(z.type()).view(-1, self.in_features)
+
+            h_t, c_t = self.lstm_cell(cur_input, (h_t, c_t))
             # x_t = nn.functional.log_softmax(self.linear(h_t), dim=-1)
             x_t = self.linear(h_t)
             output.append(x_t)
