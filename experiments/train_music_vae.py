@@ -175,6 +175,8 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
             logger.add_scalar("eval.loss", loss.item(), global_step)
 
             if batch_idx == 0:
+                recon_epoch_dir = reconstruct_dir / str(epoch)
+                recon_epoch_dir.mkdir()
                 # reconstruction
                 _, recon = torch.max(x_hat.cpu(), dim=-1)
                 for i, (orig_melody, recon_melody) in enumerate(zip(x[:MAX_N_RESULTS],
@@ -184,7 +186,7 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
 
                     save_reconstruction(melody_decode(orig_melody),
                                         melody_decode(recon_melody),
-                                        str(reconstruct_dir / "{}".format(i)))
+                                        str(recon_epoch_dir / "{}".format(i)))
 
                 # interpolate
                 if x.size(0) > 1:
