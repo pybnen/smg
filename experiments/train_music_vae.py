@@ -212,7 +212,18 @@ def get_run_dir(_run, run_dir):
 
 
 @ex.capture
-def run(_run, batch_size, num_epochs, num_workers, learning_rate, z_size, melody_dir, melody_length, log_interval):
+def run(_run,
+        batch_size,
+        num_epochs,
+        num_workers,
+        learning_rate,
+        z_size,
+        melody_dir,
+        melody_length,
+        log_interval,
+        encoder_params,
+        decoder_params,
+        music_vae_params):
     run_dir = get_run_dir()
     sample_dir = Path(run_dir) / "results/samples"
     sample_dir.mkdir(parents=True, exist_ok=True)
@@ -229,16 +240,9 @@ def run(_run, batch_size, num_epochs, num_workers, learning_rate, z_size, melody
     melody_decode = MelodyDecode()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    params = {
-        "input_size": 1,
-        "hidden_size": z_size,
-        "z_size": z_size,
-        "num_layers": 1
-    }
-    encoder = smg_encoder.BidirectionalLstmEncoder(**params)
-    decoder = smg_decoder.LstmDecoder(130, params["z_size"], teacher_forcing=False)
-    model = MusicVAE(encoder=encoder, decoder=decoder, teacher_forcing=False)
-
+    encoder = smg_encoder.BidirectionalLstmEncoder(**encoder_params)
+    decoder = smg_decoder.LstmDecoder(**decoder_params)
+    model = MusicVAE(encoder=encoder, decoder=decoder, **music_vae_params)
     model = model.to(device)
 
     opt = optim.Adam(model.parameters(), lr=learning_rate)
