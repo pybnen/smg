@@ -29,31 +29,34 @@ class LstmDecoder(nn.Module):
         self.linear = nn.Linear(self.z_size, self.out_features, bias=True)
 
     def forward(self, z, seq_length=None, x=None):
-        assert(not self.teacher_forcing or x is not None)
+        # only use teacher forcing for training
+        teacher_forcing = self.teacher_forcing and self.training
+        assert(not teacher_forcing or x is not None)
         assert(seq_length or x)
 
         batch_size, _ = z.size()
 
-        if seq_length is None:
-            # assume sequence length is in second dimension
+        if teacher_forcing:
             seq_length = x.size(1)
 
         # init hidden with latent vector
         h_t = z
         c_t = torch.zeros_like(z).type(z.type())
-        x_t = torch.zeros((batch_size, self.in_features)).type(z.type())
+
+        # start with zero as input
+        cur_input = torch.zeros((batch_size, self.in_features)).type(z.type())
 
         output = []
         for t in range(seq_length):
-            if self.teacher_forcing:
-                cur_input = x[:, t]
-            else:
-                cur_input = x_t.argmax(dim=-1).type(z.type()).view(-1, self.in_features)
-
             h_t, c_t = self.lstm_cell(cur_input, (h_t, c_t))
             # x_t = nn.functional.log_softmax(self.linear(h_t), dim=-1)
             x_t = self.linear(h_t)
             output.append(x_t)
+
+            if teacher_forcing:
+                cur_input = x[:, t]
+            else:
+                cur_input = x_t.argmax(dim=-1).type(z.type()).view(-1, self.in_features)
 
         return torch.stack(output, dim=1)
 

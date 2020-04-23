@@ -189,10 +189,10 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
                                         str(recon_epoch_dir / "{}".format(i)))
 
                 # interpolate
-                # if x.size(0) > 1:
-                #     start_melody, end_melody = x[0], x[1]
-                #     samples = interpolate(model, start_melody, end_melody, 7, device)
-                #     save_interpolation(samples, str(interpolate_dir / "epoch_{}".format(epoch)))
+                if x.size(0) > 1:
+                    start_melody, end_melody = x[0], x[1]
+                    samples = interpolate(model, start_melody, end_melody, 7, device)
+                    save_interpolation(samples, str(interpolate_dir / "epoch_{}".format(epoch)))
 
             global_step += 1
 
@@ -222,8 +222,7 @@ def run(_run,
         melody_length,
         log_interval,
         encoder_params,
-        decoder_params,
-        music_vae_params):
+        decoder_params):
 
     run_dir = get_run_dir()
     sample_dir = Path(run_dir) / "results/samples"
@@ -243,7 +242,7 @@ def run(_run,
 
     encoder = smg_encoder.BidirectionalLstmEncoder(**encoder_params)
     decoder = smg_decoder.LstmDecoder(**decoder_params)
-    model = MusicVAE(encoder=encoder, decoder=decoder, **music_vae_params)
+    model = MusicVAE(encoder=encoder, decoder=decoder)
     model = model.to(device)
 
     opt = optim.Adam(model.parameters(), lr=learning_rate)
@@ -265,19 +264,19 @@ def run(_run,
                              melody_decode,
                              logger)
 
-        # TODO log statistics
-        # with torch.no_grad():
-        #     sample_epoch_dir = sample_dir / str(epoch)
-        #     sample_epoch_dir.mkdir()
-        #
-        #     # sample from z space
-        #     z = torch.randn(MAX_N_RESULTS, z_size).to(device)
-        #     sample = model.decode(z, melody_length).cpu()
-        #     _, sample_argmax = torch.max(sample, dim=-1)
-        #     for i, melody in enumerate(sample_argmax):
-        #         melody = melody.cpu().numpy().astype(np.int8)
-        #         save_melody(melody_decode(melody),
-        #                     str(sample_epoch_dir / "sample_{}".format(i)))
+        model.eval()
+        with torch.no_grad():
+            sample_epoch_dir = sample_dir / str(epoch)
+            sample_epoch_dir.mkdir()
+
+            # sample from z space
+            z = torch.randn(MAX_N_RESULTS, z_size).to(device)
+            sample = model.decode(z, melody_length).cpu()
+            _, sample_argmax = torch.max(sample, dim=-1)
+            for i, melody in enumerate(sample_argmax):
+                melody = melody.cpu().numpy().astype(np.int8)
+                save_melody(melody_decode(melody),
+                            str(sample_epoch_dir / "sample_{}".format(i)))
 
 
 @ex.config
