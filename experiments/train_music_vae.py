@@ -24,6 +24,8 @@ from smg.models.music_vae import encoder as smg_encoder
 from smg.models.music_vae import decoder as smg_decoder
 from smg.ingredients.data import data_ingredient, dataset_train_valid_split
 
+MAX_N_RESULTS = 4
+
 # create experiment
 ex = Experiment('train_music_vae', ingredients=[data_ingredient])
 
@@ -41,6 +43,7 @@ def interpolate(model, start_melody, end_melody, num_steps, device):
     with torch.no_grad():
         mu, sigma = model.encode(endpoints)
         z = model.reparameterize(mu, sigma)  # maybe directly use mu
+        z = z.cpu()
         z = torch.stack([_slerp(z[0], z[1], t)
                          for t in np.linspace(0, 1, num_steps)]).to(device)
 
@@ -174,7 +177,8 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
             if batch_idx == 0:
                 # reconstruction
                 _, recon = torch.max(x_hat.cpu(), dim=-1)
-                for i, (orig_melody, recon_melody) in enumerate(zip(x, recon)):
+                for i, (orig_melody, recon_melody) in enumerate(zip(x[:MAX_N_RESULTS],
+                                                                    recon[:MAX_N_RESULTS])):
                     orig_melody = orig_melody.cpu().squeeze(dim=-1).numpy().astype(np.int8)
                     recon_melody = recon_melody.cpu().numpy().astype(np.int8)
 
@@ -212,7 +216,6 @@ def run(_run, batch_size, num_epochs, num_workers, learning_rate, z_size, melody
     sample_dir.mkdir(parents=True, exist_ok=True)
     reconstruct_dir = Path(run_dir) / "results/reconstruction"
     reconstruct_dir.mkdir(parents=True, exist_ok=True)
-
     interpolate_dir = Path(run_dir) / "results/interpolation"
     interpolate_dir.mkdir(parents=True, exist_ok=True)
 
@@ -261,7 +264,7 @@ def run(_run, batch_size, num_epochs, num_workers, learning_rate, z_size, melody
             sample_epoch_dir.mkdir()
 
             # sample from z space
-            z = torch.randn(16, z_size).to(device)
+            z = torch.randn(MAX_N_RESULTS, z_size).to(device)
             sample = model.decode(z, melody_length).cpu()
             _, sample_argmax = torch.max(sample, dim=-1)
             for i, melody in enumerate(sample_argmax):
