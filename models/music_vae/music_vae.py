@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from smg import common
 
 
 class MusicVAE(nn.Module):
@@ -30,6 +31,23 @@ class MusicVAE(nn.Module):
 
         x_hat = self.decoder(z, seq_length=seq_length, x=x)
         return x_hat, mu, sigma
+
+    def create_ckpt(self):
+        ckpt = {"encoder": self.encoder.create_ckpt(),
+                "decoder": self.encoder.create_ckpt()}
+        return ckpt
+
+    @classmethod
+    def load_from_ckpt(clazz, ckpt):
+        #ckpt = torch.load(ckpt_file, map_location=device)
+
+        encoder = common.load_class_by_name(ckpt["encoder"]["clazz"], **ckpt['encoder']['kwargs'])
+        encoder.load_state_dict(ckpt["encoder"]['state'])
+
+        decoder = common.load_class_by_name(ckpt["decoder"]["clazz"], **ckpt['decoder']['kwargs'])
+        decoder.load_state_dict(ckpt["decoder"]['state'])
+
+        return clazz(encoder=encoder, decoder=decoder)
 
 
 if __name__ == "__main__":

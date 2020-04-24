@@ -26,6 +26,10 @@ class BidirectionalLstmEncoder(nn.Module):
         #  In the article an embedding layer is used, may be interesting, why not?
 
         self.z_size = z_size
+        self.kwargs = {"input_size": input_size,
+                       "hidden_size": hidden_size,
+                       "z_size": z_size,
+                       "num_layers": num_layers}
 
         self.lstm = nn.LSTM(input_size=input_size,
                             hidden_size=hidden_size,
@@ -57,6 +61,12 @@ class BidirectionalLstmEncoder(nn.Module):
         #  why????? ask advisor
         sigma = nn.functional.softplus(self.enc_sigma(x_T))
         return mu, sigma
+
+    def create_ckpt(self):
+        ckpt = {"clazz": ".".join([self.__module__, self.__class__.__name__]),
+                "state": self.state_dict(),
+                "kwargs": self.kwargs}
+        return ckpt
 
 
 if __name__ == "__main__":

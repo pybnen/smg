@@ -21,6 +21,10 @@ class LstmDecoder(nn.Module):
         self.out_features = out_features
         self.z_size = z_size
         self.teacher_forcing = teacher_forcing
+        self.kwargs = {"in_features": in_features,
+                       "out_features": out_features,
+                       "z_size": z_size,
+                       "teacher_forcing": teacher_forcing}
 
         # TODO confirm that lstmcell in a loop yields the same
         #  result as an lstm layer, for teacher_forcing lstmlayer could be used for performance
@@ -59,6 +63,12 @@ class LstmDecoder(nn.Module):
                 cur_input = x_t.argmax(dim=-1).type(z.type()).view(-1, self.in_features)
 
         return torch.stack(output, dim=1)
+
+    def create_ckpt(self):
+        ckpt = {"clazz": ".".join([self.__module__, self.__class__.__name__]),
+                "state": self.state_dict(),
+                "kwargs": self.kwargs}
+        return ckpt
 
 
 if __name__ == "__main__":

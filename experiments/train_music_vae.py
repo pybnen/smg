@@ -30,6 +30,16 @@ MAX_N_RESULTS = 4
 ex = Experiment('train_music_vae', ingredients=[data_ingredient])
 
 
+def save_checkpoint(file_path, epoch, model, optimizer):
+    """Save current training state"""
+    ckpt = {
+        'epoch': epoch,
+        'model': model.create_ckpt(),
+        'optimizer': optimizer.state_dict()
+    }
+    torch.save(ckpt, file_path)
+
+
 def interpolate(model, start_melody, end_melody, num_steps, device):
 
     def _slerp(p0, p1, t):
@@ -198,7 +208,7 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
 
     print('====> Evaluation set loss: {:.4f}  ({:.4f} sec.)'.format(eval_loss / len(data_loader.dataset),
                                                                     time.time() - start_time))
-    return global_step
+    return global_step, eval_loss
 
 
 @ex.capture
@@ -231,6 +241,8 @@ def run(_run,
     reconstruct_dir.mkdir(parents=True, exist_ok=True)
     interpolate_dir = Path(run_dir) / "results/interpolation"
     interpolate_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir = Path(run_dir) / "ckpt"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     logger = CompositeLogger()
     log_dir = run_dir + "/tensorboard"
@@ -256,13 +268,19 @@ def run(_run,
     dl_eval = DataLoader(ds_eval, batch_size=batch_size, num_workers=num_workers, shuffle=False)
 
     train_step = eval_step = 0
+    best_loss = float('inf')
     for epoch in range(1, num_epochs+1):
         train_step = train(epoch, train_step, model, dl_train, calc_loss, opt, device, log_interval, logger)
-        eval_step = evaluate(epoch, eval_step, model, dl_eval, calc_loss, device,
-                             reconstruct_dir,
-                             interpolate_dir,
-                             melody_decode,
-                             logger)
+        eval_step, eval_loss = evaluate(epoch, eval_step, model, dl_eval, calc_loss, device,
+                                        reconstruct_dir,
+                                        interpolate_dir,
+                                        melody_decode,
+                                        logger)
+        if eval_loss < best_loss:
+            print("====> Got a new best model! From {} to {}".format(best_loss, eval_loss))
+            best_loss = eval_loss
+            save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, opt)
+
 
         model.eval()
         with torch.no_grad():
