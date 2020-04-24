@@ -148,13 +148,14 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, device, log_inte
 
         opt.zero_grad()
         x_hat, mu, sigma = model.forward(x)
-        loss, _, _, _ = loss_fn(x_hat, mu, sigma, x)
+        loss, r_loss, kl_cost, _ = loss_fn(x_hat, mu, sigma, x)
+        #  elbo_loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x)
         loss.backward()
         opt.step()
 
-        # TODO log all the losses
-        logger.add_scalar("train.loss", loss.item(), global_step)
         train_loss += loss.item()
+        logger.add_scalar("train.recon_error", r_loss.item(), global_step)
+        logger.add_scalar("train.kl_div", kl_cost.item(), global_step)
 
         if (batch_idx + 1) % log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\t{:.4f} sec.'.format(
@@ -178,11 +179,12 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
         for batch_idx, x in enumerate(data_loader):
             x = x.to(device)
             x_hat, mu, sigma = model.forward(x)
-            loss, _, _, _ = loss_fn(x_hat, mu, sigma, x)
+            loss, r_loss, kl_cost, _ = loss_fn(x_hat, mu, sigma, x)
+            #  elbo_loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x)
 
-            # TODO log all the losses
             eval_loss += loss.item()
-            logger.add_scalar("eval.loss", loss.item(), global_step)
+            logger.add_scalar("eval.recon_error", r_loss.item(), global_step)
+            logger.add_scalar("eval.kl_div", kl_cost.item(), global_step)
 
             if batch_idx == 0:
                 recon_epoch_dir = reconstruct_dir / str(epoch)
@@ -299,17 +301,8 @@ def run(_run,
 
 @ex.config
 def config():
-    # run_dir = "../runs/train_music_vae"
-    # log_interval = 100
-
     batch_size = 16
     num_workers = 0
-
-    # num_epochs = 2
-    # learning_rate = 1e-3
-    # z_size = 512
-    # melody_dir = "../data/melodies/"
-    # melody_length = 256
 
 
 @ex.automain
