@@ -60,9 +60,15 @@ class LstmDecoder(nn.Module):
             if teacher_forcing:
                 cur_input = x[:, t]
             else:
-                cur_input = x_t.argmax(dim=-1).type(z.type()).view(-1, self.in_features)
+                # Got the following error on cp student server:
+                #  "RuntimeError: Expected isFloatingType(grads[i].scalar_type()) to be true, but got false."
+                #  I could narrow the error down to the argmax operation, and detaching the output of the network x_t
+                #  fixes the error.
+                #  on the student server pytorch version 1.5.0+cu101 is used
+                cur_input = x_t.detach().argmax(dim=-1).type(z.type()).view(-1, self.in_features)
 
-        return torch.stack(output, dim=1)
+        output = torch.stack(output, dim=1)
+        return output
 
     def create_ckpt(self):
         ckpt = {"clazz": ".".join([self.__module__, self.__class__.__name__]),
