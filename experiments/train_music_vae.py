@@ -1,6 +1,7 @@
 import numpy as np
 from pathlib import Path
 import time
+import functools
 import matplotlib.pyplot as plt
 
 import torch
@@ -115,31 +116,30 @@ def save_melody(melody, file_path_without_suffix):
     plt.close()
 
 
+def calc_beta(step, beta_rate, max_beta):
+    """"Formula taken from magenta music vae implementation.
+    (see magenta/models/music_vae/base_model.py class MusicVAE method _compute_model_loss)"""
+    return (1.0 - beta_rate**step) * max_beta
+
+
 def calc_loss(x_hat, mu, sigma, x, beta=1.0, free_bits=0):
     variance = sigma.pow(2)
     log_variance = variance.log()
 
-    kl_div = -0.5 * torch.sum(1 + log_variance - mu.pow(2) - variance)
+    kl_div = -0.5 * torch.mean(1 + log_variance - mu.pow(2) - variance)
 
     free_nats = free_bits * np.log(2.0)
-    # TODO fix this
-    kl_cost = kl_div
-    # kl_cost = torch.max(kl_div - free_nats, torch.tensor(0, dtype=kl_div.dtype))
+    kl_cost = torch.max(kl_div - free_nats, torch.zeros_like(kl_div))
 
-    n_steps = x_hat.size(1)
-    r_loss = None
-    for t in range(n_steps):
-        if r_loss is None:
-            r_loss = F.cross_entropy(x_hat[:, t], x[:, t].squeeze(dim=-1).type(dtype=torch.int64), reduction='sum')
-        else:
-            r_loss += F.cross_entropy(x_hat[:, t], x[:, t].squeeze(dim=-1).type(dtype=torch.int64), reduction='sum')
+    n_features = x_hat.size(-1)
+    r_loss = F.cross_entropy(x_hat.view(-1, n_features), x.view(-1).type(dtype=torch.int64), reduction="mean")
 
     elbo_loss = r_loss + beta * kl_cost
 
     return elbo_loss, r_loss, kl_cost, kl_div
 
 
-def train(epoch, global_step, model, data_loader, loss_fn, opt, device, log_interval, logger):
+def train(epoch, global_step, model, data_loader, loss_fn, opt, device, log_interval, logger, beta_fn):
     model.train()
     train_loss = 0.0
     start_time = time.time()
@@ -148,14 +148,18 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, device, log_inte
 
         opt.zero_grad()
         x_hat, mu, sigma = model.forward(x)
-        loss, r_loss, kl_cost, _ = loss_fn(x_hat, mu, sigma, x)
-        #  elbo_loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x)
+
+        beta = beta_fn(global_step)
+        loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
         loss.backward()
         opt.step()
 
         train_loss += loss.item()
-        logger.add_scalar("train.recon_error", r_loss.item(), global_step)
-        logger.add_scalar("train.kl_div", kl_cost.item(), global_step)
+        logger.add_scalar("train.loss", loss.item(), global_step)
+        logger.add_scalar("train.losses/kl_beta", beta, global_step)
+        logger.add_scalar("train.losses/kl_bits", kl_div / np.log(2.0), global_step)
+        logger.add_scalar("train.losses/kl_loss", kl_cost.item(), global_step)
+        logger.add_scalar("train.losses/r_loss", r_loss.item(), global_step)
 
         if (batch_idx + 1) % log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\t{:.4f} sec.'.format(
@@ -171,7 +175,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, device, log_inte
 
 
 def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruct_dir,
-             interpolate_dir, melody_decode, logger):
+             interpolate_dir, melody_decode, logger, beta):
     model.eval()
     eval_loss = 0.0
     start_time = time.time()
@@ -179,12 +183,15 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
         for batch_idx, x in enumerate(data_loader):
             x = x.to(device)
             x_hat, mu, sigma = model.forward(x)
-            loss, r_loss, kl_cost, _ = loss_fn(x_hat, mu, sigma, x)
-            #  elbo_loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x)
+            loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
 
             eval_loss += loss.item()
-            logger.add_scalar("eval.recon_error", r_loss.item(), global_step)
-            logger.add_scalar("eval.kl_div", kl_cost.item(), global_step)
+            logger.add_scalar("eval.loss", loss.item(), global_step)
+            logger.add_scalar("eval.losses/kl_beta", beta, global_step)
+            logger.add_scalar("eval.losses/kl_bits", kl_div / np.log(2.0), global_step)
+            logger.add_scalar("eval.losses/kl_loss", kl_cost.item(), global_step)
+            logger.add_scalar("eval.losses/r_loss", r_loss.item(), global_step)
+
 
             if batch_idx == 0:
                 recon_epoch_dir = reconstruct_dir / str(epoch)
@@ -225,16 +232,11 @@ def get_run_dir(_run, run_dir):
 
 @ex.capture
 def run(_run,
-        batch_size,
-        num_epochs,
-        num_workers,
+        batch_size, num_epochs, num_workers,
         learning_rate,
-        z_size,
-        melody_dir,
-        melody_length,
-        log_interval,
-        encoder_params,
-        decoder_params):
+        melody_dir, melody_length, log_interval,
+        z_size, encoder_params, decoder_params,
+        beta_rate, max_beta, free_bits):
 
     run_dir = get_run_dir()
     sample_dir = Path(run_dir) / "results/samples"
@@ -267,17 +269,21 @@ def run(_run,
     ds_train, ds_eval = dataset_train_valid_split(dataset, valid_split=0.2)
 
     dl_train = DataLoader(ds_train, batch_size=batch_size, num_workers=num_workers, drop_last=True, shuffle=True)
-    dl_eval = DataLoader(ds_eval, batch_size=batch_size, num_workers=num_workers, shuffle=False)
+    dl_eval = DataLoader(ds_eval, batch_size=batch_size, num_workers=num_workers, drop_last=True, shuffle=True)
+
+    # calc beta based on train step
+    beta_fn = functools.partial(calc_beta, beta_rate=beta_rate, max_beta=max_beta)
+    loss_fn = functools.partial(calc_loss, free_bits=free_bits)
 
     train_step = eval_step = 0
     best_loss = float('inf')
     for epoch in range(1, num_epochs+1):
-        train_step = train(epoch, train_step, model, dl_train, calc_loss, opt, device, log_interval, logger)
-        eval_step, eval_loss = evaluate(epoch, eval_step, model, dl_eval, calc_loss, device,
+        train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, device, log_interval, logger, beta_fn)
+        eval_step, eval_loss = evaluate(epoch, eval_step, model, dl_eval, loss_fn, device,
                                         reconstruct_dir,
                                         interpolate_dir,
                                         melody_decode,
-                                        logger)
+                                        logger, beta=max_beta)
         if eval_loss < best_loss:
             print("====> Got a new best model! From {} to {}".format(best_loss, eval_loss))
             best_loss = eval_loss
