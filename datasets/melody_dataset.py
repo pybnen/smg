@@ -75,7 +75,7 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
     melody_dir = "../data/lmd_full_melody/"
-    ds = MelodyDataset(melody_dir=melody_dir, melody_length=DEFAULT_MEL_LEN, transforms=MelodyEncode())
+    ds = MelodyDataset(melody_dir=melody_dir, melody_length=32, transforms=MelodyEncode())
 
     print("Dataset")
     print("-------")
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     # print(seq)
     print("--- %s seconds ---" % (time.time() - start_time))
 
-    dl = DataLoader(ds, batch_size=16, num_workers=0)
+    dl = DataLoader(ds, batch_size=512, num_workers=0, drop_last=True, shuffle=True)
 
     print("Data Loader")
     print("-------")

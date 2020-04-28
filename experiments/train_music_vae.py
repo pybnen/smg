@@ -139,7 +139,7 @@ def calc_loss(x_hat, mu, sigma, x, beta=1.0, free_bits=0):
     return elbo_loss, r_loss, kl_cost, kl_div
 
 
-def train(epoch, global_step, model, data_loader, loss_fn, opt, device, log_interval, logger, beta_fn):
+def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, device, log_interval, logger, beta_fn):
     model.train()
     train_loss = 0.0
     start_time = time.time()
@@ -152,6 +152,8 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, device, log_inte
         beta = beta_fn(global_step)
         loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
         loss.backward()
+
+        opt.param_groups[0]['lr'] = lr_scheduler(global_step)
         opt.step()
 
         train_loss += loss.item()
@@ -191,7 +193,6 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
             logger.add_scalar("eval.losses/kl_bits", kl_div / np.log(2.0), global_step)
             logger.add_scalar("eval.losses/kl_loss", kl_cost.item(), global_step)
             logger.add_scalar("eval.losses/r_loss", r_loss.item(), global_step)
-
 
             if batch_idx == 0:
                 recon_epoch_dir = reconstruct_dir / str(epoch)
@@ -233,7 +234,7 @@ def get_run_dir(_run, run_dir):
 @ex.capture
 def run(_run,
         batch_size, num_epochs, num_workers,
-        learning_rate,
+        initial_lr, lr_decay_rate, min_lr,
         melody_dir, melody_length, log_interval,
         z_size, encoder_params, decoder_params,
         beta_rate, max_beta, free_bits):
@@ -261,7 +262,10 @@ def run(_run,
     model = MusicVAE(encoder=encoder, decoder=decoder)
     model = model.to(device)
 
-    opt = optim.Adam(model.parameters(), lr=learning_rate)
+    # set betas, even this are the default values, to make it explicit that we use
+    # the same values as in the music vae implementation.
+    opt = optim.Adam(model.parameters(), lr=initial_lr, betas=(0.9, 0.999))
+    lr_scheduler =lambda step: (initial_lr - min_lr) * lr_decay_rate**step + min_lr
 
     transform = transforms.Compose([MelodyEncode(),
                                     lambda x: x[:, np.newaxis]])
@@ -278,7 +282,7 @@ def run(_run,
     train_step = eval_step = 0
     best_loss = float('inf')
     for epoch in range(1, num_epochs+1):
-        train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, device, log_interval, logger, beta_fn)
+        train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval, logger, beta_fn)
         eval_step, eval_loss = evaluate(epoch, eval_step, model, dl_eval, loss_fn, device,
                                         reconstruct_dir,
                                         interpolate_dir,
