@@ -57,3 +57,11 @@ Each option has different configurations.
 `num_epochs` Number of epochs to train  
 `lr` Learning rate of optimizer  
 `checkpoint` Path to checkpoint file to continue training  
+
+
+## Notes/Problems
+
+Debugging `sacred` experiments resulted in an error on my local machine (Windows 10),
+something about an invalid json regarding cpu info.
+
+Downgrading pip package py-cpuinfo from version 5.0.0 to 4.0.0 fixed this error.
