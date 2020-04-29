@@ -122,7 +122,7 @@ def calc_beta(step, beta_rate, max_beta):
     return (1.0 - beta_rate**step) * max_beta
 
 
-def calc_loss(x_hat, mu, sigma, x, beta=1.0, free_bits=0):
+def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     variance = sigma.pow(2)
     log_variance = variance.log()
 
@@ -134,7 +134,7 @@ def calc_loss(x_hat, mu, sigma, x, beta=1.0, free_bits=0):
     n_features = x_hat.size(-1)
     r_loss = F.cross_entropy(x_hat.view(-1, n_features), x.view(-1).type(dtype=torch.int64), reduction="mean")
 
-    elbo_loss = r_loss + beta * kl_cost
+    elbo_loss = alpha * r_loss + beta * kl_cost
 
     return elbo_loss, r_loss, kl_cost, kl_div
 
@@ -153,7 +153,8 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, de
         loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
         loss.backward()
 
-        opt.param_groups[0]['lr'] = lr_scheduler(global_step)
+        lr = lr_scheduler(global_step)
+        opt.param_groups[0]['lr'] = lr
         opt.step()
 
         train_loss += loss.item()
@@ -162,6 +163,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, de
         logger.add_scalar("train.losses/kl_bits", kl_div / np.log(2.0), global_step)
         logger.add_scalar("train.losses/kl_loss", kl_cost.item(), global_step)
         logger.add_scalar("train.losses/r_loss", r_loss.item(), global_step)
+        logger.add_scalar("lr", lr, global_step)
 
         if (batch_idx + 1) % log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\t{:.4f} sec.'.format(
@@ -171,7 +173,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, de
                 time.time() - start_time))
         global_step += 1
 
-    print('====> Epoch: {} Average loss: {:.4f} ({:.4f} sec.)'.format(epoch, train_loss / len(data_loader.dataset),
+    print('====> Epoch: {} Average loss: {:.6f} ({:.4f} sec.)'.format(epoch, train_loss / len(data_loader),
                                                                       time.time() - start_time))
     return global_step
 
@@ -216,9 +218,9 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
 
             global_step += 1
 
-    print('====> Evaluation set loss: {:.4f}  ({:.4f} sec.)'.format(eval_loss / len(data_loader.dataset),
+    print('====> Evaluation set loss: {:.6f}  ({:.4f} sec.)'.format(eval_loss / len(data_loader),
                                                                     time.time() - start_time))
-    return global_step, eval_loss
+    return global_step, eval_loss / len(data_loader)
 
 
 @ex.capture
@@ -237,7 +239,7 @@ def run(_run,
         initial_lr, lr_decay_rate, min_lr,
         melody_dir, melody_length, log_interval,
         z_size, encoder_params, decoder_params,
-        beta_rate, max_beta, free_bits):
+        beta_rate, max_beta, free_bits, alpha=1.0):
 
     run_dir = get_run_dir()
     sample_dir = Path(run_dir) / "results/samples"
@@ -277,7 +279,7 @@ def run(_run,
 
     # calc beta based on train step
     beta_fn = functools.partial(calc_beta, beta_rate=beta_rate, max_beta=max_beta)
-    loss_fn = functools.partial(calc_loss, free_bits=free_bits)
+    loss_fn = functools.partial(calc_loss, free_bits=free_bits, alpha=alpha)
 
     train_step = eval_step = 0
     best_loss = float('inf')
@@ -289,7 +291,7 @@ def run(_run,
                                         melody_decode,
                                         logger, beta=max_beta)
         if eval_loss < best_loss:
-            print("====> Got a new best model! From {} to {}".format(best_loss, eval_loss))
+            print("====> Got a new best model! From {:.6f} to {:.6f}".format(best_loss, eval_loss))
             best_loss = eval_loss
             save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, opt)
 

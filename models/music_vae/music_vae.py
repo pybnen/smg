@@ -34,7 +34,7 @@ class MusicVAE(nn.Module):
 
     def create_ckpt(self):
         ckpt = {"encoder": self.encoder.create_ckpt(),
-                "decoder": self.encoder.create_ckpt()}
+                "decoder": self.decoder.create_ckpt()}
         return ckpt
 
     @classmethod
