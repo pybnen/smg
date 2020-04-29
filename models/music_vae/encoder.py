@@ -18,7 +18,7 @@ class RandomEncoder(nn.Module):
 
 class BidirectionalLstmEncoder(nn.Module):
 
-    def __init__(self, input_size, hidden_size, z_size, num_layers=2):
+    def __init__(self, input_size, hidden_size, z_size, num_layers=1):
         super().__init__()
 
         # TODO Look at this:

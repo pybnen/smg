@@ -14,29 +14,50 @@ class RandomDecoder(nn.Module):
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, in_features, out_features, z_size, teacher_forcing=True):
+    def __init__(self, in_features, out_features, z_size, num_layers=1, teacher_forcing=True):
         super().__init__()
 
         self.in_features = in_features
         self.out_features = out_features
         self.z_size = z_size
+        self.num_layers = num_layers
         self.teacher_forcing = teacher_forcing
         self.kwargs = {"in_features": in_features,
                        "out_features": out_features,
                        "z_size": z_size,
+                       "num_layers": num_layers,
                        "teacher_forcing": teacher_forcing}
 
         # TODO confirm that lstmcell in a loop yields the same
         #  result as an lstm layer, for teacher_forcing lstmlayer could be used for performance
         #  reasons
-        self.lstm_cell = nn.LSTMCell(self.in_features, self.z_size, bias=True)
+        cells = []
+        for i in range(num_layers):
+            if i == 0:
+                cell = nn.LSTMCell(self.in_features, self.z_size, bias=True)
+            else:
+                cell = nn.LSTMCell(self.z_size, self.z_size, bias=True)
+            cells.append(cell)
+        self.cells = nn.ModuleList(cells)
+
+        def cells_forward(cell_input, states):
+            h_t, c_t = states
+
+            for i, cell in enumerate(self.cells):
+                h_t[i], c_t[i] = cell(cell_input, (h_t[i], c_t[i]))
+                cell_input = h_t[i]
+
+            return h_t, c_t
+
+        self.cells_forward = cells_forward
+
         self.linear = nn.Linear(self.z_size, self.out_features, bias=True)
 
     def forward(self, z, seq_length=None, x=None):
         # only use teacher forcing for training
         teacher_forcing = self.teacher_forcing and self.training
         assert(not teacher_forcing or x is not None)
-        assert(seq_length or x)
+        assert(seq_length is not None or x is not None)
 
         batch_size, _ = z.size()
 
@@ -44,17 +65,19 @@ class LstmDecoder(nn.Module):
             seq_length = x.size(1)
 
         # init hidden with latent vector
-        h_t = z
-        c_t = torch.zeros_like(z).type(z.type())
+        # TODO check with magenta implementation if all layers of
+        #   stacked lstm are initialized with z or only the first.
+        h_t = [z] * self.num_layers
+        c_t = [torch.zeros_like(z).type(z.type())] * self.num_layers
 
         # start with zero as input
         cur_input = torch.zeros((batch_size, self.in_features)).type(z.type())
 
         output = []
         for t in range(seq_length):
-            h_t, c_t = self.lstm_cell(cur_input, (h_t, c_t))
+            h_t, c_t = self.cells_forward(cur_input, (h_t, c_t))
             # x_t = nn.functional.log_softmax(self.linear(h_t), dim=-1)
-            x_t = self.linear(h_t)
+            x_t = self.linear(h_t[-1])
             output.append(x_t)
 
             if teacher_forcing:
@@ -78,20 +101,70 @@ class LstmDecoder(nn.Module):
 
 
 if __name__ == "__main__":
+    from copy import deepcopy
     import numpy as np
+    torch.manual_seed(0)
 
-    batch_size = 8
-    z_size = 512
+    batch_size = 20
+    z_size = 10
+    seq_len = 5
 
-    z = torch.randn(batch_size, z_size)
+    in_features = 10
+    out_features = 5
+    num_layers = 10
 
-    sample_features = 130
+    decoder = LstmDecoder(in_features, out_features, z_size, num_layers=num_layers, teacher_forcing=True)
 
-    decoder = LstmDecoder(sample_features, z_size, teacher_forcing=False)
+    # now i want to check if an lstm would net me the same result
+    lstm = nn.LSTM(in_features, z_size, num_layers=num_layers)
+    # copy weights
+    for i in range(num_layers):
+        cell = decoder.cells[i]
+        # set ih
+        decoder_param = deepcopy(cell.weight_ih)
+        setattr(lstm, "weight_ih_l{}".format(i), decoder_param)
 
-    seq_length = 32
-    x_hat = decoder(z, seq_length=seq_length)
-    print("x_hat.shape = {}".format(x_hat.size()))
+        # set hh
+        decoder_param = deepcopy(cell.weight_hh)
+        setattr(lstm, "weight_hh_l{}".format(i), decoder_param)
+
+        # set bias ih
+        decoder_param = deepcopy(cell.bias_ih)
+        setattr(lstm, "bias_ih_l{}".format(i), decoder_param)
+
+        # set bias hh
+        decoder_param = deepcopy(cell.bias_hh)
+        setattr(lstm, "bias_hh_l{}".format(i), decoder_param)
+
+    for _ in range(10):
+        z = torch.randn(batch_size, z_size)
+        x = torch.randint(0, 130, size=(batch_size, seq_len, in_features)).float()
+        x_hat1 = decoder(z, x=x)
+
+        new_x = torch.cat([torch.zeros((batch_size, 1, in_features)), x[:, :-1, :]], dim=1)
+        c0 = torch.zeros((num_layers, batch_size, z_size))
+        h0 = torch.stack([z]*num_layers, dim=0)
+
+        seq_out, (h_t, c_t) = lstm(new_x.permute((1, 0, 2)), (h0, c0))
+        seq_out = seq_out.permute((1, 0, 2))
+        x_hat2 = []
+        for i in range(seq_len):
+            x_hat2.append(decoder.linear(seq_out[:, i, :]))
+        x_hat2 = torch.stack(x_hat2, dim=1)
+
+        assert(np.allclose(x_hat1.detach().numpy(), x_hat2.detach().numpy()))
+    print('done')
+
+    # Test teacher_forcing False
+    # decoder = LstmDecoder(in_features, out_features, z_size, num_layers=1, teacher_forcing=False)
+    # print(list(decoder.named_parameters()))
+    #
+
+    # x_hat = decoder(z, seq_length=seq_length)
+    # print("x_hat.shape = {}".format(x_hat.size()))
+    # print("x_hat", x_hat)
+
+
 
 
 
