@@ -195,25 +195,25 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
             logger.add_scalar("eval.losses/kl_loss", kl_cost.item(), global_step)
             logger.add_scalar("eval.losses/r_loss", r_loss.item(), global_step)
 
-            if batch_idx == 0:
-                recon_epoch_dir = reconstruct_dir / str(epoch)
-                recon_epoch_dir.mkdir()
-                # reconstruction
-                _, recon = torch.max(x_hat.cpu(), dim=-1)
-                for i, (orig_melody, recon_melody) in enumerate(zip(x[:MAX_N_RESULTS],
-                                                                    recon[:MAX_N_RESULTS])):
-                    orig_melody = orig_melody.cpu().squeeze(dim=-1).numpy().astype(np.int8)
-                    recon_melody = recon_melody.cpu().numpy().astype(np.int8)
-
-                    save_reconstruction(melody_decode(orig_melody),
-                                        melody_decode(recon_melody),
-                                        str(recon_epoch_dir / "{}".format(i)))
-
-                # interpolate
-                if x.size(0) > 1:
-                    start_melody, end_melody = x[0], x[1]
-                    samples = interpolate(model, start_melody, end_melody, 7, device)
-                    save_interpolation(samples, str(interpolate_dir / "epoch_{}".format(epoch)))
+            # if batch_idx == 0:
+            #     recon_epoch_dir = reconstruct_dir / str(epoch)
+            #     recon_epoch_dir.mkdir()
+            #     # reconstruction
+            #     _, recon = torch.max(x_hat.cpu(), dim=-1)
+            #     for i, (orig_melody, recon_melody) in enumerate(zip(x[:MAX_N_RESULTS],
+            #                                                         recon[:MAX_N_RESULTS])):
+            #         orig_melody = orig_melody.cpu().squeeze(dim=-1).numpy().astype(np.int8)
+            #         recon_melody = recon_melody.cpu().numpy().astype(np.int8)
+            #
+            #         save_reconstruction(melody_decode(orig_melody),
+            #                             melody_decode(recon_melody),
+            #                             str(recon_epoch_dir / "{}".format(i)))
+            #
+            #     # interpolate
+            #     if x.size(0) > 1:
+            #         start_melody, end_melody = x[0], x[1]
+            #         samples = interpolate(model, start_melody, end_melody, 7, device)
+            #         save_interpolation(samples, str(interpolate_dir / "epoch_{}".format(epoch)))
 
             global_step += 1
 
@@ -295,19 +295,19 @@ def run(_run,
             save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, opt)
 
 
-        model.eval()
-        with torch.no_grad():
-            sample_epoch_dir = sample_dir / str(epoch)
-            sample_epoch_dir.mkdir()
-
-            # sample from z space
-            z = torch.randn(MAX_N_RESULTS, z_size).to(device)
-            sample = model.decode(z, melody_length).cpu()
-            _, sample_argmax = torch.max(sample, dim=-1)
-            for i, melody in enumerate(sample_argmax):
-                melody = melody.cpu().numpy().astype(np.int8)
-                save_melody(melody_decode(melody),
-                            str(sample_epoch_dir / "sample_{}".format(i)))
+        # model.eval()
+        # with torch.no_grad():
+        #     sample_epoch_dir = sample_dir / str(epoch)
+        #     sample_epoch_dir.mkdir()
+        #
+        #     # sample from z space
+        #     z = torch.randn(MAX_N_RESULTS, z_size).to(device)
+        #     sample = model.decode(z, melody_length).cpu()
+        #     _, sample_argmax = torch.max(sample, dim=-1)
+        #     for i, melody in enumerate(sample_argmax):
+        #         melody = melody.cpu().numpy().astype(np.int8)
+        #         save_melody(melody_decode(melody),
+        #                     str(sample_epoch_dir / "sample_{}".format(i)))
 
 
 @ex.config
