@@ -59,10 +59,18 @@ class MelodyDataset(Dataset):
 
 
 class MelodyEncode:
+    def __init__(self, n_classes):
+        self.n_classes = n_classes
+
     def __call__(self, melody):
         # TODO remove magic constant, as of now expects integer values from [-2, x],
         #  but the pitch range could also be restricted, e.g. [-2, -1] union [22, 90]
-        return melody + 2
+        event = melody + 2
+
+        seq_length = event.shape[0]
+        one_hot = np.zeros((seq_length, self.n_classes), dtype=np.float32)
+        one_hot[np.arange(seq_length), event.astype(np.int32)] = 1.0
+        return one_hot
 
 
 class MelodyDecode:
@@ -73,9 +81,11 @@ class MelodyDecode:
 if __name__ == "__main__":
     import time
     from torch.utils.data import DataLoader
+    from torchvision import transforms
 
     melody_dir = "../data/lmd_full_melody/"
-    ds = MelodyDataset(melody_dir=melody_dir, melody_length=32, transforms=MelodyEncode())
+    ds = MelodyDataset(melody_dir=melody_dir, melody_length=5, transforms=MelodyEncode(n_classes=130))
+
 
     print("Dataset")
     print("-------")

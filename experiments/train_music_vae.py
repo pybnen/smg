@@ -10,8 +10,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from torchvision import transforms
-
 from sacred import Experiment
 from sacred.observers import FileStorageObserver
 
@@ -132,7 +130,8 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     kl_cost = torch.max(kl_div - free_nats, torch.zeros_like(kl_div))
 
     n_features = x_hat.size(-1)
-    r_loss = F.cross_entropy(x_hat.view(-1, n_features), x.view(-1).type(dtype=torch.int64), reduction="mean")
+    x = x.argmax(dim=-1)
+    r_loss = F.cross_entropy(x_hat.view(-1, n_features), x.view(-1), reduction="mean")
 
     elbo_loss = alpha * r_loss + beta * kl_cost
 
@@ -237,7 +236,8 @@ def get_run_dir(_run, run_dir):
 def run(_run,
         batch_size, num_epochs, num_workers,
         initial_lr, lr_decay_rate, min_lr,
-        melody_dir, melody_length, log_interval,
+        melody_dir, melody_length, n_classes,
+        log_interval,
         z_size, encoder_params, decoder_params,
         beta_rate, max_beta, free_bits, alpha=1.0):
 
@@ -269,9 +269,8 @@ def run(_run,
     opt = optim.Adam(model.parameters(), lr=initial_lr, betas=(0.9, 0.999))
     lr_scheduler =lambda step: (initial_lr - min_lr) * lr_decay_rate**step + min_lr
 
-    transform = transforms.Compose([MelodyEncode(),
-                                    lambda x: x[:, np.newaxis]])
-    dataset = MelodyDataset(melody_dir=melody_dir, melody_length=melody_length, transforms=transform)
+    dataset = MelodyDataset(melody_dir=melody_dir, melody_length=melody_length,
+                            transforms=MelodyEncode(n_classes=n_classes))
     ds_train, ds_eval = dataset_train_valid_split(dataset, valid_split=0.2)
 
     dl_train = DataLoader(ds_train, batch_size=batch_size, num_workers=num_workers, drop_last=True, shuffle=True)
