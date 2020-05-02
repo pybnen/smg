@@ -14,46 +14,48 @@ class RandomDecoder(nn.Module):
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, in_features, out_features, z_size, num_layers=1, teacher_forcing=True, temperature=1.0):
+    def __init__(self, in_features, hidden_size, out_features,
+                 z_size, num_layers=1, teacher_forcing=True, temperature=1.0):
         super().__init__()
 
         self.in_features = in_features
+        self.hidden_size = hidden_size
         self.out_features = out_features
         self.z_size = z_size
         self.num_layers = num_layers
         self.teacher_forcing = teacher_forcing
         self.temperature = temperature
+
         self.kwargs = {"in_features": in_features,
+                       "hidden_features": hidden_size,
                        "out_features": out_features,
                        "z_size": z_size,
                        "num_layers": num_layers,
                        "teacher_forcing": teacher_forcing,
                        "temperature": temperature}
 
-        # TODO confirm that lstmcell in a loop yields the same
-        #  result as an lstm layer, for teacher_forcing lstmlayer could be used for performance
-        #  reasons
+        # mapping from latent space to initial state of decoder
+        n_state_units = num_layers * hidden_size * 2  # each layer has cell and hidden units
+        self.initial_state_embed = nn.Sequential(
+            nn.Linear(z_size, n_state_units, bias=True),
+            nn.Tanh())
+
         cells = []
         for i in range(num_layers):
             if i == 0:
-                cell = nn.LSTMCell(self.in_features, self.z_size, bias=True)
+                cell = nn.LSTMCell(self.in_features, self.hidden_size, bias=True)
             else:
-                cell = nn.LSTMCell(self.z_size, self.z_size, bias=True)
+                cell = nn.LSTMCell(self.hidden_size, self.hidden_size, bias=True)
             cells.append(cell)
         self.cells = nn.ModuleList(cells)
+        self.output_layer = nn.Linear(self.hidden_size, self.out_features, bias=True)
 
-        def cells_forward(cell_input, states):
-            h_t, c_t = states
-
-            for i, cell in enumerate(self.cells):
-                h_t[i], c_t[i] = cell(cell_input, (h_t[i], c_t[i]))
-                cell_input = h_t[i]
-
-            return h_t, c_t
-
-        self.cells_forward = cells_forward
-
-        self.linear = nn.Linear(self.z_size, self.out_features, bias=True)
+    def cells_forward(self, cell_input, states):
+        h_t, c_t = states
+        for i, cell in enumerate(self.cells):
+            h_t[i], c_t[i] = cell(cell_input, (h_t[i], c_t[i]))
+            cell_input = h_t[i]
+        return h_t, c_t
 
     def forward(self, z, seq_length=None, x=None):
         # only use teacher forcing for training
@@ -66,17 +68,12 @@ class LstmDecoder(nn.Module):
         if teacher_forcing:
             seq_length = x.size(1)
 
-        # init hidden with latent vector
-
-        # TODO z must first be activated through a fully connected layer with tanh
-
-        # TODO check with magenta implementation if all layers of stacked lstm are initialized with z or only the first.
-        #   [UPDATE] checked and nope, z is input for linear layer with output size of the sum of all hidden and
-        #            cell units (e.g. for 2 layers with hidden 512 the output size is 2048) the output is then used
-        #            to init hidden and cell state of lstm cell (no na)
-
-        h_t = [z] * self.num_layers
-        c_t = [torch.zeros_like(z).type(z.type())] * self.num_layers
+        # get initial states from latent space z
+        initial_states = torch.split(self.initial_state_embed(z), self.hidden_size, dim=1)
+        h_t, c_t = [], []
+        for i in range(self.num_layers):
+            h_t.append(initial_states[2*i])
+            c_t.append(initial_states[2*i+1])
 
         # start with zero as input
         # TODO check if init all dim with zero is correct
@@ -86,7 +83,7 @@ class LstmDecoder(nn.Module):
         for t in range(seq_length):
             h_t, c_t = self.cells_forward(cur_input, (h_t, c_t))
             # x_t = nn.functional.log_softmax(self.linear(h_t), dim=-1)
-            x_t = self.linear(h_t[-1])
+            x_t = self.output_layer(h_t[-1])
             output.append(x_t)
 
             if teacher_forcing:
