@@ -124,10 +124,13 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     variance = sigma.pow(2)
     log_variance = variance.log()
 
-    kl_div = -0.5 * torch.mean(1 + log_variance - mu.pow(2) - variance)
-
+    # NOTE: this parameter depends on the sequence length.
     free_nats = free_bits * np.log(2.0)
-    kl_cost = torch.max(kl_div - free_nats, torch.zeros_like(kl_div))
+
+    # Sum up kl div per time step, then substract the free nats and remove negative values, then calc mean
+    # this should be consistent with magenta implementation
+    kl_div = -0.5 * torch.sum(1 + log_variance - mu.pow(2) - variance, dim=1)
+    kl_cost = torch.mean(torch.max(kl_div - free_nats, torch.zeros_like(kl_div)))
 
     n_features = x_hat.size(-1)
     x = x.argmax(dim=-1)
