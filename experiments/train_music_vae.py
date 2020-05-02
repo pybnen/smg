@@ -133,6 +133,8 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     x = x.argmax(dim=-1)
     r_loss = F.cross_entropy(x_hat.view(-1, n_features), x.view(-1), reduction="mean")
 
+    # NOTE: to be consistent with the magenta implementation,
+    #   alpha must be set to sequence length
     elbo_loss = alpha * r_loss + beta * kl_cost
 
     return elbo_loss, r_loss, kl_cost, kl_div
