@@ -69,7 +69,7 @@ class LstmDecoder(nn.Module):
 
         # get initial states from latent space z
         initial_states = self.initial_state_embed(z)
-        ht, ct = initial_states.view(batch_size, self.num_layers, 2, -1).permute(2, 1, 0, 3)
+        ht, ct = initial_states.view(batch_size, self.num_layers, 2, -1).permute(2, 1, 0, 3).contiguous()
 
 
         z_repeated = z.detach().unsqueeze(dim=1).repeat(1, sequence_length, 1)
