@@ -2,105 +2,96 @@ import torch
 import torch.nn as nn
 
 
-class RandomDecoder(nn.Module):
-    def __init__(self, output_size) -> None:
-        super().__init__()
-        self.output_size = output_size
+class TrainHelper:
+    def __init__(self, inputs, sampling_probability=0.0, aux_input=None, next_inputs_fn=None):
+        self.inputs = inputs
+        self.aux_input = aux_input
+        self.sampler = torch.distributions.Bernoulli(probs=sampling_probability)
+        self.next_inputs_fn = next_inputs_fn
+        self.sampled_cnt = 0
 
-    def forward(self, z):
-        batch_size, _ = z.size()
+        self.input_sequence_length = self.inputs.size(1)
 
-        return torch.randn(size=(batch_size, *self.output_size))
+    def initialize(self):
+        return torch.cat((self.inputs[:, 0], self.aux_input[:, 0]), dim=-1)
+
+    def next_inputs(self, time, outputs):
+        next_time = time + 1
+        if next_time >= self.input_sequence_length:
+            return None
+
+        teacher_forcing = self.sampler.sample() == 0
+        if teacher_forcing:
+            next_inputs = self.inputs[:, next_time]
+        else:
+            self.sampled_cnt += 1
+            next_inputs = outputs
+            if self.next_inputs_fn is not None:
+                next_inputs = self.next_inputs_fn(next_inputs)
+
+        if self.aux_input is not None:
+            next_inputs = torch.cat((next_inputs, self.aux_input[:, next_time]), dim=-1)
+
+        return next_inputs
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, in_features, hidden_size, out_features,
-                 z_size, num_layers=1, teacher_forcing=True, temperature=1.0):
+    def __init__(self, input_size, hidden_size, output_size, z_dim, num_layers=1, temperature=1.0):
         super().__init__()
 
-        self.in_features = in_features
+        self.input_size = input_size
         self.hidden_size = hidden_size
-        self.out_features = out_features
-        self.z_size = z_size
+        self.output_size = output_size
+        self.z_dim = z_dim
         self.num_layers = num_layers
-        self.teacher_forcing = teacher_forcing
         self.temperature = temperature
+        self.sampling_probability = 0.0
 
-        self.kwargs = {"in_features": in_features,
-                       "hidden_features": hidden_size,
-                       "out_features": out_features,
-                       "z_size": z_size,
-                       "num_layers": num_layers,
-                       "teacher_forcing": teacher_forcing,
-                       "temperature": temperature}
+        self.kwargs = {"input_size": input_size, "hidden_size": hidden_size, "output_size": output_size,
+                       "z_dim": z_dim, "num_layers": num_layers, "temperature": temperature}
 
         # mapping from latent space to initial state of decoder
         n_state_units = num_layers * hidden_size * 2  # each layer has cell and hidden units
         self.initial_state_embed = nn.Sequential(
-            nn.Linear(z_size, n_state_units, bias=True),
+            nn.Linear(z_dim, n_state_units, bias=True),
             nn.Tanh())
 
-        cells = []
-        for i in range(num_layers):
-            if i == 0:
-                cell = nn.LSTMCell(self.in_features, self.hidden_size, bias=True)
-            else:
-                cell = nn.LSTMCell(self.hidden_size, self.hidden_size, bias=True)
-            cells.append(cell)
-        self.cells = nn.ModuleList(cells)
-        self.output_layer = nn.Linear(self.hidden_size, self.out_features, bias=True)
+        self.lstm_layer = nn.LSTM(input_size, hidden_size, bias=True, num_layers=num_layers)
+        self.output_layer = nn.Linear(hidden_size, output_size, bias=True)
 
-    def cells_forward(self, cell_input, states):
-        h_t, c_t = states
-        for i, cell in enumerate(self.cells):
-            h_t[i], c_t[i] = cell(cell_input, (h_t[i], c_t[i]))
-            cell_input = h_t[i]
-        return h_t, c_t
+    def next_inputs(self, inputs):
+        sampler = torch.distributions.one_hot_categorical.OneHotCategorical(logits=inputs / self.temperature)
+        return sampler.sample()
 
-    def forward(self, z, seq_length=None, x=None):
-        # only use teacher forcing for training
-        teacher_forcing = self.teacher_forcing and self.training
-        assert(not teacher_forcing or x is not None)
-        assert(seq_length is not None or x is not None)
-
+    def forward(self, z, sequence_input, sequence_length=None):
         batch_size, _ = z.size()
-
-        if teacher_forcing:
-            seq_length = x.size(1)
+        sequence_length = sequence_input.size(1)
 
         # get initial states from latent space z
-        initial_states = torch.split(self.initial_state_embed(z), self.hidden_size, dim=1)
-        h_t, c_t = [], []
-        for i in range(self.num_layers):
-            h_t.append(initial_states[2*i])
-            c_t.append(initial_states[2*i+1])
+        initial_states = self.initial_state_embed(z)
+        ht, ct = initial_states.view(batch_size, self.num_layers, 2, -1).permute(2, 1, 0, 3)
 
-        # start with zero as input
-        # TODO check if init all dim with zero is correct
-        cur_input = torch.zeros((batch_size, self.in_features)).type(z.type())
 
-        output = []
-        for t in range(seq_length):
-            h_t, c_t = self.cells_forward(cur_input, (h_t, c_t))
-            # x_t = nn.functional.log_softmax(self.linear(h_t), dim=-1)
-            x_t = self.output_layer(h_t[-1])
-            output.append(x_t)
+        z_repeated = z.detach().unsqueeze(dim=1).repeat(1, sequence_length, 1)
+        # do not use teacher forcing for evaluation
+        sampling_probability = self.sampling_probability if self.training else 1.0
+        helper = TrainHelper(inputs=sequence_input,
+                             sampling_probability=sampling_probability,
+                             aux_input=z_repeated,
+                             next_inputs_fn=self.next_inputs)
 
-            if teacher_forcing:
-                cur_input = x[:, t]
-            else:
-                # Got the following error on cp student server:
-                #  "RuntimeError: Expected isFloatingType(grads[i].scalar_type()) to be true, but got false."
-                #  I could narrow the error down to the argmax operation, and detaching the output of the network x_t
-                #  fixes the error.
-                #  on the student server pytorch version 1.5.0+cu101 is used
-                logits = x_t.detach()
-                sampler = torch.distributions.one_hot_categorical.OneHotCategorical(logits=logits / self.temperature)
-                cur_input = sampler.sample()
-                #cur_input = x_t.detach().argmax(dim=-1).type(z.type()).view(-1, self.in_features)
+        # init first outputs TODO maybe use some specific start token instead
+        next_inputs = helper.initialize()
+        sequence_output = []
+        for t in range(sequence_length):
+            _, (ht, ct) = self.lstm_layer(next_inputs.unsqueeze(dim=0), (ht, ct))
+            current_output = self.output_layer(ht[-1])
+            sequence_output.append(current_output)
 
-        output = torch.stack(output, dim=1)
-        return output
+            next_inputs = helper.next_inputs(t, current_output.detach())  # detach is very important
+
+        sequence_output = torch.stack(sequence_output, dim=1)
+        return sequence_output, helper.sampled_cnt / float(sequence_output.size(1) - 1)
 
     def create_ckpt(self):
         ckpt = {"clazz": ".".join([self.__module__, self.__class__.__name__]),
@@ -110,6 +101,7 @@ class LstmDecoder(nn.Module):
 
 
 if __name__ == "__main__":
+    # TODO adapt to changes
     from copy import deepcopy
     import numpy as np
     torch.manual_seed(0)

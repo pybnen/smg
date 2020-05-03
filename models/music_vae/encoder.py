@@ -3,32 +3,32 @@ import torch.nn as nn
 
 
 class RandomEncoder(nn.Module):
-    def __init__(self, z_size) -> None:
+    def __init__(self, z_dim) -> None:
         super().__init__()
         self.dummy_weight = nn.Parameter(torch.randn(3, 3), requires_grad=True)
 
-        self.z_size = z_size
+        self.z_dim = z_dim
 
     def forward(self, x):
         # batch_size, seq_length, features
         batch_size, _ = x.size()
-        mu, sigma = torch.randn((2, batch_size, self.z_size))
+        mu, sigma = torch.randn((2, batch_size, self.z_dim))
         return mu, sigma
 
 
 class BidirectionalLstmEncoder(nn.Module):
 
-    def __init__(self, input_size, hidden_size, z_size, num_layers=1):
+    def __init__(self, input_size, hidden_size, z_dim, num_layers=1):
         super().__init__()
 
         # TODO Look at this:
         #  https://medium.com/@sikdar_sandip/implementing-a-variational-autoencoder-vae-in-pytorch-4029a819ccb6
         #  In the article an embedding layer is used, may be interesting, why not?
 
-        self.z_size = z_size
+        self.z_dim = z_dim
         self.kwargs = {"input_size": input_size,
                        "hidden_size": hidden_size,
-                       "z_size": z_size,
+                       "z_dim": z_dim,
                        "num_layers": num_layers}
 
         self.lstm = nn.LSTM(input_size=input_size,
@@ -38,8 +38,8 @@ class BidirectionalLstmEncoder(nn.Module):
 
         # multiply hidden size by 2 because of bidirectional
         in_features = hidden_size * 2
-        self.enc_mu = nn.Linear(in_features=in_features, out_features=z_size)
-        self.enc_sigma = nn.Linear(in_features=in_features, out_features=z_size)
+        self.enc_mu = nn.Linear(in_features=in_features, out_features=z_dim)
+        self.enc_sigma = nn.Linear(in_features=in_features, out_features=z_dim)
 
     def forward(self, x):
         # batch_size, seq_length, features
@@ -75,10 +75,10 @@ if __name__ == "__main__":
     params = {
         "input_size": 1,
         "hidden_size": 1048,
-        "z_size": 1048,
+        "z_dim": 1048,
         "num_layers": 2
     }
-    z_size = params.get("z_size")
+    z_dim = params.get("z_dim")
     input_size = params.get("input_size")
     seq_length = 32
 

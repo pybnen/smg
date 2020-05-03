@@ -114,6 +114,13 @@ def save_melody(melody, file_path_without_suffix):
     plt.close()
 
 
+def calc_sampling_probabilty(step, rate, schedule):
+    if schedule == "constant":
+        return rate
+    k = torch.tensor(rate, dtype=torch.float32)
+    return 1.0 - k / (k + torch.exp(step / k))
+
+
 def calc_beta(step, beta_rate, max_beta):
     """"Formula taken from magenta music vae implementation.
     (see magenta/models/music_vae/base_model.py class MusicVAE method _compute_model_loss)"""
@@ -140,23 +147,28 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     #   alpha must be set to sequence length
     elbo_loss = alpha * r_loss + beta * kl_cost
 
-    return elbo_loss, r_loss, kl_cost, kl_div
+    return elbo_loss, r_loss, kl_cost, torch.mean(kl_div)
 
 
-def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, device, log_interval, logger, beta_fn):
+def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, device, log_interval, logger, beta_fn, sampling_prob_fn):
     model.train()
     train_loss = 0.0
     start_time = time.time()
     for batch_idx, x in enumerate(data_loader):
         x = x.to(device)
 
+        # set sampling prob
+        sampling_prob = sampling_prob_fn(global_step)
+        model.decoder.sampling_probability = sampling_prob
+
         opt.zero_grad()
-        x_hat, mu, sigma = model.forward(x)
+        x_hat, mu, sigma, sampled_ratio = model.forward(x)
 
         beta = beta_fn(global_step)
         loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
         loss.backward()
 
+        # set learning rate
         lr = lr_scheduler(global_step)
         opt.param_groups[0]['lr'] = lr
         opt.step()
@@ -167,6 +179,8 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, de
         logger.add_scalar("train.losses/kl_bits", kl_div / np.log(2.0), global_step)
         logger.add_scalar("train.losses/kl_loss", kl_cost.item(), global_step)
         logger.add_scalar("train.losses/r_loss", r_loss.item(), global_step)
+        logger.add_scalar("sampling/sampling_probability", sampling_prob, global_step)
+        logger.add_scalar("sampling/train_ratio", sampled_ratio, global_step)
         logger.add_scalar("lr", lr, global_step)
 
         if (batch_idx + 1) % log_interval == 0:
@@ -190,7 +204,7 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
     with torch.no_grad():
         for batch_idx, x in enumerate(data_loader):
             x = x.to(device)
-            x_hat, mu, sigma = model.forward(x)
+            x_hat, mu, sigma, sampled_ratio = model.forward(x)
             loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
 
             eval_loss += loss.item()
@@ -199,6 +213,7 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
             logger.add_scalar("eval.losses/kl_bits", kl_div / np.log(2.0), global_step)
             logger.add_scalar("eval.losses/kl_loss", kl_cost.item(), global_step)
             logger.add_scalar("eval.losses/r_loss", r_loss.item(), global_step)
+            logger.add_scalar("sampling/eval_ratio", sampled_ratio, global_step)
 
             # if batch_idx == 0:
             #     recon_epoch_dir = reconstruct_dir / str(epoch)
@@ -242,8 +257,9 @@ def run(_run,
         batch_size, num_epochs, num_workers,
         initial_lr, lr_decay_rate, min_lr,
         melody_dir, melody_length, n_classes,
+        sampling_schedule, sampling_rate,
         log_interval,
-        z_size, encoder_params, decoder_params,
+        z_dim, encoder_params, decoder_params,
         beta_rate, max_beta, free_bits, alpha=1.0):
 
     run_dir = get_run_dir()
@@ -284,11 +300,13 @@ def run(_run,
     # calc beta based on train step
     beta_fn = functools.partial(calc_beta, beta_rate=beta_rate, max_beta=max_beta)
     loss_fn = functools.partial(calc_loss, free_bits=free_bits, alpha=alpha)
+    sampling_prob_fn = functools.partial(calc_sampling_probabilty, rate=sampling_rate, schedule=sampling_schedule)
 
     train_step = eval_step = 0
     best_loss = float('inf')
     for epoch in range(1, num_epochs+1):
-        train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval, logger, beta_fn)
+        train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval,
+                           logger, beta_fn, sampling_prob_fn)
         eval_step, eval_loss = evaluate(epoch, eval_step, model, dl_eval, loss_fn, device,
                                         reconstruct_dir,
                                         interpolate_dir,
@@ -306,7 +324,7 @@ def run(_run,
         #     sample_epoch_dir.mkdir()
         #
         #     # sample from z space
-        #     z = torch.randn(MAX_N_RESULTS, z_size).to(device)
+        #     z = torch.randn(MAX_N_RESULTS, z_dim).to(device)
         #     sample = model.decode(z, melody_length).cpu()
         #     _, sample_argmax = torch.max(sample, dim=-1)
         #     for i, melody in enumerate(sample_argmax):

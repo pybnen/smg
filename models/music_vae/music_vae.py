@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from smg import common
 
 
@@ -18,19 +19,19 @@ class MusicVAE(nn.Module):
         eps = torch.randn_like(sigma)
         return mu + eps * sigma
 
-    def decode(self, z, seq_length=None, x=None):
-        assert(seq_length or x)
+    def decode(self, z, input_sequence=None, sequence_length=None):
+        return self.decoder(z, input_sequence, sequence_length=sequence_length)
 
-        return self.decoder(z, seq_length=seq_length, x=x)
+    def forward(self, input_sequence, seq_length=None):
+        seq_length = seq_length or input_sequence.size(1)
 
-    def forward(self, x, seq_length=None):
-        seq_length = seq_length or x.size(1)
-
-        mu, sigma = self.encode(x)
+        mu, sigma = self.encode(input_sequence)
         z = self.reparameterize(mu, sigma)
 
-        x_hat = self.decoder(z, seq_length=seq_length, x=x)
-        return x_hat, mu, sigma
+        # add a `start token` at the beginning of each sequence and truncate last time step
+        decoder_input = F.pad(input_sequence, pad=(0, 0, 1, 0, 0, 0))[:, :-1]
+        x_hat, sampled_ratio = self.decode(z, input_sequence=decoder_input, sequence_length=seq_length)
+        return x_hat, mu, sigma, sampled_ratio
 
     def create_ckpt(self):
         ckpt = {"encoder": self.encoder.create_ckpt(),
@@ -64,17 +65,17 @@ if __name__ == "__main__":
     ds = MelodyDataset(melody_dir="../data/lmd_full_melody/", transforms=MelodyEncode(), melody_length=seq_length)
     dl = DataLoader(ds, drop_last=True, num_workers=0, batch_size=batch_size)
 
-    # encoder = RandomEncoder(z_size)
+    # encoder = RandomEncoder(z_dim)
     # decoder = RandomDecoder(out_size))
     params = {
         "input_size": 1,
         "hidden_size": 1048,
-        "z_size": 1048,
+        "z_dim": 1048,
         "num_layers": 2
     }
 
     encoder = BidirectionalLstmEncoder(**params)
-    decoder = LstmDecoder(features, params["z_size"], teacher_forcing=False)
+    decoder = LstmDecoder(features, params["z_dim"], teacher_forcing=False)
     model = MusicVAE(encoder=encoder, decoder=decoder)
 
     #x = torch.randint(0, 127, size=(8, *out_size))
