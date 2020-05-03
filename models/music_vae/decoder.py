@@ -13,6 +13,8 @@ class TrainHelper:
         self.input_sequence_length = self.inputs.size(1)
 
     def initialize(self):
+        if self.aux_input is None:
+            return self.inputs[:, 0]
         return torch.cat((self.inputs[:, 0], self.aux_input[:, 0]), dim=-1)
 
     def next_inputs(self, time, outputs):
@@ -36,7 +38,7 @@ class TrainHelper:
 
 
 class LstmDecoder(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, z_dim, num_layers=1, temperature=1.0):
+    def __init__(self, input_size, hidden_size, output_size, z_dim, num_layers=1, temperature=1.0, use_z_as_input=True):
         super().__init__()
 
         self.input_size = input_size
@@ -45,10 +47,12 @@ class LstmDecoder(nn.Module):
         self.z_dim = z_dim
         self.num_layers = num_layers
         self.temperature = temperature
+        self.use_z_as_input = use_z_as_input
         self.sampling_probability = 0.0
 
         self.kwargs = {"input_size": input_size, "hidden_size": hidden_size, "output_size": output_size,
-                       "z_dim": z_dim, "num_layers": num_layers, "temperature": temperature}
+                       "z_dim": z_dim, "num_layers": num_layers, "temperature": temperature,
+                       "use_z_as_input": use_z_as_input}
 
         # mapping from latent space to initial state of decoder
         n_state_units = num_layers * hidden_size * 2  # each layer has cell and hidden units
@@ -71,13 +75,15 @@ class LstmDecoder(nn.Module):
         initial_states = self.initial_state_embed(z)
         ht, ct = initial_states.view(batch_size, self.num_layers, 2, -1).permute(2, 1, 0, 3).contiguous()
 
+        aux_input = None
+        if self.use_z_as_input:
+            aux_input = z.detach().unsqueeze(dim=1).repeat(1, sequence_length, 1)
 
-        z_repeated = z.detach().unsqueeze(dim=1).repeat(1, sequence_length, 1)
         # do not use teacher forcing for evaluation
         sampling_probability = self.sampling_probability if self.training else 1.0
         helper = TrainHelper(inputs=sequence_input,
                              sampling_probability=sampling_probability,
-                             aux_input=z_repeated,
+                             aux_input=aux_input,
                              next_inputs_fn=self.next_inputs)
 
         # init first outputs TODO maybe use some specific start token instead
