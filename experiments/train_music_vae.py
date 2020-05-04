@@ -140,7 +140,7 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     #   alpha must be set to sequence length
     elbo_loss = alpha * r_loss + beta * kl_cost
 
-    return elbo_loss, r_loss, kl_cost, kl_div
+    return elbo_loss, r_loss, kl_cost, torch.mean(kl_div)
 
 
 def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, device, log_interval, logger, beta_fn):
