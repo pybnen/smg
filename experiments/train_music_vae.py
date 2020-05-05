@@ -17,7 +17,7 @@ import pypianoroll as pp
 
 from smg.common.loggers import CompositeLogger, TensorBoardLogger, SacredLogger
 from smg.music.melody_lib import melody_to_midi, melody_to_pianoroll
-from smg.datasets.melody_dataset import MelodyDataset, MelodyEncode, MelodyDecode
+from smg.datasets.melody_dataset import MelodyDataset, MelodyEncode, MelodyDecode, FixedLengthMelodyDataset
 from smg.models.music_vae.music_vae import MusicVAE
 from smg.models.music_vae import encoder as smg_encoder
 from smg.models.music_vae import decoder as smg_decoder
@@ -290,8 +290,10 @@ def run(_run,
     opt = optim.Adam(model.parameters(), lr=initial_lr, betas=(0.9, 0.999))
     lr_scheduler =lambda step: (initial_lr - min_lr) * lr_decay_rate**step + min_lr
 
-    dataset = MelodyDataset(melody_dir=melody_dir, melody_length=melody_length,
-                            transforms=MelodyEncode(n_classes=n_classes))
+    #dataset = MelodyDataset(melody_dir=melody_dir, melody_length=melody_length,
+    #                        transforms=MelodyEncode(n_classes=n_classes))
+    dataset = FixedLengthMelodyDataset(melody_dir=melody_dir, transforms=MelodyEncode(n_classes=n_classes,
+                                                                                      num_special_events=0))
     ds_train, ds_eval = dataset_train_valid_split(dataset, valid_split=0.2)
 
     dl_train = DataLoader(ds_train, batch_size=batch_size, num_workers=num_workers, drop_last=True, shuffle=True)
