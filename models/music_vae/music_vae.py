@@ -15,9 +15,14 @@ class MusicVAE(nn.Module):
         return self.encoder(x)
 
     def reparameterize(self, mu, sigma):
-        # std = torch.exp(0.5 * logvar)
-        eps = torch.randn_like(sigma)
-        return mu + eps * sigma
+        # TODO: add parameter to handle this
+        if self.training:
+            eps = torch.randn_like(sigma)
+            return mu + eps * sigma
+        else:
+            # for evaluation don't sample from q, just use mean
+            return mu
+
 
     def decode(self, z, input_sequence=None, sequence_length=None):
         return self.decoder(z, input_sequence, sequence_length=sequence_length)
