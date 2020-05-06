@@ -187,7 +187,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, de
         batch_num = batch_idx + 1
         if (batch_num) % log_interval == 0 or batch_num == n_batches:
             # epoch | batch_num/n_batches (finsihed% ) | loss | r_loss | kl_loss | sec
-            print("{:3d} | {:2d}/{} ({:3.0f}%) | {:.6f} | {:.6f} | {:.6f} | {:.4f} sec.".format(
+            print("{:3d} | {:4d}/{} ({:3.0f}%) | {:.6f} | {:.6f} | {:.6f} | {:.4f} sec.".format(
                 epoch, batch_num, n_batches, 100. * batch_num / n_batches,
                 loss.item(),  r_loss.item(), kl_cost.item(), time.time() - start_time))
 
@@ -289,7 +289,7 @@ def run(_run,
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     logger = CompositeLogger()
-    log_dir = run_dir + "/tensorboard"
+    log_dir = run_dir
     logger.add(TensorBoardLogger(log_dir=log_dir))
     logger.add(SacredLogger(ex, _run))
 
