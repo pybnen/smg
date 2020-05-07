@@ -1,21 +1,14 @@
+from pathlib import Path
+import argparse
+
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from glob import glob
-import numpy as np
-import matplotlib.pyplot as plt
-import pypianoroll as pp
-from pathlib import Path
 
 from smg.datasets.melody_dataset import FixedLengthMelodyDataset, MelodyEncode
-from smg.music.melody_lib import melody_to_midi, melody_to_pianoroll
 from smg.ingredients.data import dataset_train_valid_split
-
 from smg.models.music_vae.music_vae import MusicVAE
 
-
-
-import argparse
 
 parser = argparse.ArgumentParser(description="Evaluate checkpoint with a given dataset")
 # TODO better way to get this value, should be in model and dataset
@@ -23,8 +16,8 @@ parser.add_argument("--n_classes", type=int, default=90)
 parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--num_workers", type=int, default=0)
 parser.add_argument("--temperature", type=float, default=1.0, help="Used for sampling next input from current output")
-parser.add_argument("--valid_split", type=float, default=0.2, help="Split ratio between train/eval set, set to 0.0 if not split should be made.")
-parser.add_argument("--use_train", action="store_true", default=False, help="Use train set instead of eval set, applys only if valid split is given, default False")
+parser.add_argument("--valid_split", type=float, default=0.2, help="Split ratio between train/eval set, set to 0.0 if not split should be made.")  # noqa
+parser.add_argument("--use_train", action="store_true", default=False, help="Use train set instead of eval set, applys only if valid split is given, default False")  # noqa
 parser.add_argument("ckpt_path", type=str, help="Path to checkpoint")
 parser.add_argument("dataset_dirname", type=str, help="Directory name containing dataset")
 
@@ -56,8 +49,10 @@ def evaluation_step(model, input_sequences):
         # multiply with batch_size, because want sum of batch as loss
         cross_entropy_loss = loss.item() * batch_size
         acc_per_steps = output_sequences.argmax(dim=-1) == inputs_argmax
+        # noinspection PyUnresolvedReferences
         acc = torch.sum(torch.mean(acc_per_steps.float(), dim=-1)).item()
-        acc_per_seq= torch.sum(torch.all(acc_per_steps, dim=-1).float()).item()
+        # noinspection PyTypeChecker
+        acc_per_seq = torch.sum(torch.all(acc_per_steps, dim=-1).float()).item()
 
     return output_sequences, cross_entropy_loss, acc, acc_per_seq
 
@@ -66,8 +61,8 @@ def evaluate(model, device, dataset=None, data_loader=None, log_interval=None):
     assert data_loader is not None or dataset is not None
 
     if dataset is not None:
-        def dataset_gen(dataset):
-            for input_sequence in dataset:
+        def dataset_gen(ds):
+            for input_sequence in ds:
                 yield torch.tensor(input_sequence).unsqueeze(dim=0)
         generator = dataset_gen(dataset)
     else:
@@ -128,4 +123,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
