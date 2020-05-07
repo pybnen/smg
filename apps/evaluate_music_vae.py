@@ -22,6 +22,7 @@ parser = argparse.ArgumentParser(description="Evaluate checkpoint with a given d
 parser.add_argument("--n_classes", type=int, default=90)
 parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--num_workers", type=int, default=0)
+parser.add_argument("--temperature", type=float, default=1.0, help="Used for sampling next input from current output")
 parser.add_argument("--valid_split", type=float, default=0.2, help="Split ratio between train/eval set, set to 0.0 if not split should be made.")
 parser.add_argument("--use_train", action="store_true", default=False, help="Use train set instead of eval set, applys only if valid split is given, default False")
 parser.add_argument("ckpt_path", type=str, help="Path to checkpoint")
@@ -47,12 +48,13 @@ def _log_metrics(total_loss, total_acc, sample_acc, cnt, print_header):
 
 def evaluation_step(model, input_sequences):
     with torch.no_grad():
+        batch_size, _, n_classes = input_sequences.size()
         output_sequences, _, _, _ = model.forward(input_sequences)
 
         inputs_argmax = input_sequences.argmax(dim=-1)
-        loss = F.cross_entropy(output_sequences.view(-1, args.n_classes), inputs_argmax.view(-1), reduction='mean')
+        loss = F.cross_entropy(output_sequences.view(-1, n_classes), inputs_argmax.view(-1), reduction='mean')
         # multiply with batch_size, because want sum of batch as loss
-        cross_entropy_loss = loss.item() * input_sequences.size(0)
+        cross_entropy_loss = loss.item() * batch_size
         acc_per_steps = output_sequences.argmax(dim=-1) == inputs_argmax
         acc = torch.sum(torch.mean(acc_per_steps.float(), dim=-1)).item()
         acc_per_seq= torch.sum(torch.all(acc_per_steps, dim=-1).float()).item()
@@ -107,7 +109,7 @@ def main():
         print("Dataset directory name is no directory. '{}'".format(args.dataset_dirname))
         return
 
-    # TODO find better way to retrive info about n_classes and num_special_events
+    # TODO find better way to retrieve info about n_classes and num_special_events
     dataset = FixedLengthMelodyDataset(melody_dir=args.dataset_dirname, transforms=MelodyEncode(args.n_classes,
                                                                                                 num_special_events=0))
     if args.valid_split > 0.0:
@@ -119,6 +121,7 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model_from_ckpt(args.ckpt_path, device)
+    model.decoder.temperature = args.temperature
 
     _ = evaluate(model, device, data_loader=data_loader, log_interval=len(data_loader) // 10)
 
