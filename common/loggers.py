@@ -1,5 +1,3 @@
-import librosa
-from midi2audio import FluidSynth
 import pypianoroll as pp
 from torch.utils.tensorboard import SummaryWriter
 import os
@@ -111,6 +109,9 @@ class TensorBoardLogger(Logger):
             self.add_image("{}_{}".format(name, instrument), np.expand_dims(pianoroll[:, 0, :].T, 0), step)
 
     def add_pianoroll_audio(self, name, pianoroll, step):
+        import librosa
+        from midi2audio import FluidSynth
+
         midi_file = str(self.log_dir / "tmp.mid")
         wav_file = str(self.log_dir / "tmp.wav")
 
