@@ -3,26 +3,38 @@ import torch.nn as nn
 
 
 class TrainHelper:
-    def __init__(self, inputs, sampling_probability=0.0, aux_input=None, next_inputs_fn=None):
-        self.inputs = inputs
+    def __init__(self, input_shape, input_type,
+                 inputs=None,
+                 sequence_length=None,
+                 sampling_probability=0.0,
+                 aux_input=None,
+                 next_inputs_fn=None):
+
         self.aux_input = aux_input
         self.sampler = torch.distributions.Bernoulli(probs=sampling_probability)
         self.next_inputs_fn = next_inputs_fn
         self.sampled_cnt = 0
+        self.inputs = inputs
+        self.sequence_length = sequence_length or self.inputs.size(1)
+        self.input_sequence_length = self.inputs.size(1) if self.inputs is not None else 0
 
-        self.input_sequence_length = self.inputs.size(1)
+        self.zero_input = torch.zeros(input_shape).type(input_type)
+        self.initial_input = torch.zeros(input_shape).type(input_type)
+        if self.inputs is not None:
+            self.initial_input = self.inputs[:, 0]
+
+        if self.aux_input is not None:
+            self.initial_input = torch.cat((self.initial_input, self.aux_input[:, 0]), dim=-1)
 
     def initialize(self):
-        if self.aux_input is None:
-            return self.inputs[:, 0]
-        return torch.cat((self.inputs[:, 0], self.aux_input[:, 0]), dim=-1)
+        return self.initial_input
 
     def next_inputs(self, time, outputs):
         next_time = time + 1
-        if next_time >= self.input_sequence_length:
-            return None
+        if next_time >= self.sequence_length:
+            return self.zero_input
 
-        teacher_forcing = self.sampler.sample() == 0
+        teacher_forcing = self.sampler.sample() == 0 and next_time < self.input_sequence_length
         if teacher_forcing:
             next_inputs = self.inputs[:, next_time]
         else:
@@ -49,6 +61,7 @@ class LstmDecoder(nn.Module):
         self.temperature = temperature
         self.use_z_as_input = use_z_as_input
         self.sampling_probability = 0.0
+        self.eval_allow_teacher_forcing = False
 
         self.kwargs = {"input_size": input_size, "hidden_size": hidden_size, "output_size": output_size,
                        "z_dim": z_dim, "num_layers": num_layers, "temperature": temperature,
@@ -64,12 +77,14 @@ class LstmDecoder(nn.Module):
         self.output_layer = nn.Linear(hidden_size, output_size, bias=True)
 
     def next_inputs(self, inputs):
-        sampler = torch.distributions.one_hot_categorical.OneHotCategorical(logits=inputs / self.temperature)
+        logits = inputs / self.temperature
+
+        sampler = torch.distributions.one_hot_categorical.OneHotCategorical(logits=logits)
         return sampler.sample()
 
-    def forward(self, z, sequence_input, sequence_length=None):
+    def forward(self, z, sequence_input=None, sequence_length=None):
         batch_size, _ = z.size()
-        sequence_length = sequence_input.size(1)
+        sequence_length = sequence_length or sequence_input.size(1)
 
         # get initial states from latent space z
         initial_states = self.initial_state_embed(z)
@@ -79,12 +94,20 @@ class LstmDecoder(nn.Module):
         if self.use_z_as_input:
             aux_input = z.detach().unsqueeze(dim=1).repeat(1, sequence_length, 1)
 
-        # do not use teacher forcing for evaluation
-        sampling_probability = self.sampling_probability if self.training else 1.0
-        helper = TrainHelper(inputs=sequence_input,
-                             sampling_probability=sampling_probability,
-                             aux_input=aux_input,
-                             next_inputs_fn=self.next_inputs)
+        if self.training or self.eval_allow_teacher_forcing:
+            sampling_probability = self.sampling_probability
+        else:
+            sampling_probability = 1.0
+
+        input_features = self.input_size - (self.z_dim if self.use_z_as_input else 0)
+        helper = TrainHelper(
+            input_shape=(batch_size, input_features),
+            input_type=z.type(),
+            inputs=sequence_input,
+            sequence_length=sequence_length,
+            sampling_probability=sampling_probability,
+            aux_input=aux_input,
+            next_inputs_fn=self.next_inputs)
 
         # init first outputs TODO maybe use some specific start token instead
         next_inputs = helper.initialize()
