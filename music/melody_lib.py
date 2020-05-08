@@ -18,8 +18,9 @@ MELODY_NO_EVENT = -2
 
 MIN_MIDI_PITCH = 0
 
-def create_melody():
-    return {"events": [], "start_step": 0, "end_step": 0}
+
+def create_melody(instrument):
+    return {"events": [], "start_step": 0, "end_step": 0, "instrument": instrument}
 
 
 def melody_set_length(melody, steps):
@@ -79,7 +80,7 @@ def populate_melody(instrument,
                     ignore_polyphonic_notes,
                     gap_bars,
                     pad_end=True):
-    melody = create_melody()
+    melody = create_melody(instrument)
 
     notes = sorted([n for n in quantized_notes
                     if n["instrument"] == instrument and
