@@ -39,81 +39,6 @@ def save_checkpoint(file_path, epoch, model, optimizer):
     torch.save(ckpt, file_path)
 
 
-def interpolate(model, start_melody, end_melody, num_steps, device):
-
-    def _slerp(p0, p1, t):
-        """Spherical linear interpolation."""
-        omega = np.arccos(np.dot(np.squeeze(p0/np.linalg.norm(p0)),
-                                 np.squeeze(p1/np.linalg.norm(p1))))
-        so = np.sin(omega)
-        return np.sin((1.0-t)*omega) / so * p0 + np.sin(t*omega)/so * p1
-
-    endpoints = torch.stack((start_melody, end_melody)).to(device)
-    with torch.no_grad():
-        mu, sigma = model.encode(endpoints)
-        z = model.reparameterize(mu, sigma)  # maybe directly use mu
-        z = z.cpu()
-        z = torch.stack([_slerp(z[0], z[1], t)
-                         for t in np.linspace(0, 1, num_steps)]).to(device)
-
-    return model.decode(z, endpoints.size(1))
-
-
-def save_interpolation(samples, file_path_without_suffix):
-    melody_decode = MelodyDecode()
-
-    _, samples = torch.max(samples.cpu(), dim=-1)
-
-    samples = melody_decode(samples).cpu().numpy().astype(np.int32)
-    pianorolls = []
-    for sample in samples:
-        pianorolls.append(melody_to_pianoroll(sample[:32]))
-
-    merged_pianoroll = np.concatenate(pianorolls, axis=0)
-
-    fig = plt.figure(figsize=(20, 10))
-    ax = fig.add_subplot(111)
-    pp.plot_pianoroll(ax, merged_pianoroll)
-    ax.set_xticks(np.arange(32, merged_pianoroll.shape[0], 32))
-
-    fig.savefig(file_path_without_suffix + ".png")
-    plt.close()
-
-
-def save_reconstruction(origin, recon, file_path_without_suffix):
-    pm = melody_to_midi(origin)
-    orig_filepath = file_path_without_suffix + "_orig.mid"
-    pm.write(orig_filepath)
-
-    pm = melody_to_midi(recon.astype(np.int8))
-    recon_filepath = file_path_without_suffix + "_recon.mid"
-    pm.write(recon_filepath)
-
-    fig = plt.figure(figsize=(15, 10))
-    ax = fig.add_subplot(211)
-    pp.plot_pianoroll(ax, melody_to_pianoroll(origin))
-    plt.title('original')
-
-    ax = fig.add_subplot(212)
-    pp.plot_pianoroll(ax, melody_to_pianoroll(recon))
-    plt.title('reconstruction')
-
-    fig.savefig(file_path_without_suffix + "_recon.png")
-    plt.close()
-
-
-def save_melody(melody, file_path_without_suffix):
-    pm = melody_to_midi(melody)
-    midi_filepath = file_path_without_suffix + ".mid"
-    pm.write(midi_filepath)
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    pp.plot_pianoroll(ax, melody_to_pianoroll(melody))
-    fig.savefig(file_path_without_suffix + ".png")
-    plt.close()
-
-
 def calc_sampling_probabilty(step, rate, schedule):
     if schedule == "constant":
         return rate
@@ -124,7 +49,7 @@ def calc_sampling_probabilty(step, rate, schedule):
 def calc_beta(step, beta_rate, max_beta):
     """"Formula taken from magenta music vae implementation.
     (see magenta/models/music_vae/base_model.py class MusicVAE method _compute_model_loss)"""
-    return (1.0 - beta_rate**step) * max_beta
+    return (1.0 - beta_rate ** step) * max_beta
 
 
 def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
@@ -213,60 +138,41 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
             # epoch | batch_num/n_batches (finsihed% ) | loss | r_loss | kl_loss | sec
             print("{:3d} | {:4d}/{} ({:3.0f}%) | {:.6f} | {:.6f} | {:.6f} | {:.4f} sec.".format(
                 epoch, batch_num, n_batches, 100. * batch_num / n_batches,
-                scaled_loss,  scaled_r_loss, scaled_kl_loss, time.time() - start_time))
+                stats["loss"], stats["r_loss"], stats["kl_loss"], time.time() - start_time))
         global_step += 1
     return global_step
 
 
-def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruct_dir,
-             interpolate_dir, melody_decode, logger, best_loss, beta):
+def evaluate(epoch, model, data_loader, loss_fn, device, logger, best_loss, beta):
     model.eval()
 
     total_loss = 0.0
     total_r_loss = 0.0
     total_kl_loss = 0.0
+    total_sampled_ratio = 0.0
 
     start_time = time.time()
     with torch.no_grad():
         for batch_idx, x in enumerate(data_loader):
             x = x.to(device)
             x_hat, mu, sigma, sampled_ratio = model.forward(x)
-            loss, r_loss, kl_cost, _ = loss_fn(x_hat, mu, sigma, x, beta=beta)
+            loss, r_loss, kl_cost = loss_fn(x_hat, mu, sigma, x, beta=beta)
 
             total_loss += loss.item()
-            total_r_loss += r_loss.item()
-            total_kl_loss += kl_cost.item()
-
-            logger.add_scalar("eval.loss", loss.item(), global_step)
-            logger.add_scalar("eval.losses/kl_beta", beta, global_step)
-            logger.add_scalar("eval.losses/kl_loss", kl_cost.item(), global_step)
-            logger.add_scalar("eval.losses/r_loss", r_loss.item(), global_step)
-            logger.add_scalar("sampling/eval_ratio", sampled_ratio, global_step)
-
-            # if batch_idx == 0:
-            #     recon_epoch_dir = reconstruct_dir / str(epoch)
-            #     recon_epoch_dir.mkdir()
-            #     # reconstruction
-            #     _, recon = torch.max(x_hat.cpu(), dim=-1)
-            #     for i, (orig_melody, recon_melody) in enumerate(zip(x[:MAX_N_RESULTS],
-            #                                                         recon[:MAX_N_RESULTS])):
-            #         orig_melody = orig_melody.cpu().squeeze(dim=-1).numpy().astype(np.int8)
-            #         recon_melody = recon_melody.cpu().numpy().astype(np.int8)
-            #
-            #         save_reconstruction(melody_decode(orig_melody),
-            #                             melody_decode(recon_melody),
-            #                             str(recon_epoch_dir / "{}".format(i)))
-            #
-            #     # interpolate
-            #     if x.size(0) > 1:
-            #         start_melody, end_melody = x[0], x[1]
-            #         samples = interpolate(model, start_melody, end_melody, 7, device)
-            #         save_interpolation(samples, str(interpolate_dir / "epoch_{}".format(epoch)))
-            global_step += 1
+            total_r_loss += r_loss
+            total_kl_loss += kl_cost
+            total_sampled_ratio += sampled_ratio
 
     avg_loss = total_loss / len(data_loader)
     avg_r_loss = total_r_loss / len(data_loader)
     avg_kl_loss = total_kl_loss / len(data_loader)
+    avg_sampled_ratio = total_sampled_ratio / len(data_loader)
+
+    logger.add_scalar("eval.loss", avg_loss, epoch)
+    logger.add_scalar("eval.losses/kl_beta", beta, epoch)
+    logger.add_scalar("eval.losses/kl_loss", avg_kl_loss, epoch)
+    logger.add_scalar("eval.losses/r_loss", avg_r_loss, epoch)
+    logger.add_scalar("sampling/eval_ratio", avg_sampled_ratio, epoch)
 
     new_best = avg_loss < best_loss
     if new_best:
@@ -276,7 +182,7 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
         avg_loss, avg_r_loss, avg_kl_loss, time.time() - start_time,
         " *new best*" if new_best else ""))
 
-    return global_step, best_loss, new_best
+    return best_loss, new_best
 
 
 @ex.capture
@@ -299,14 +205,7 @@ def run(_run,
         log_interval,
         z_dim, encoder_params, decoder_params,
         beta_rate, max_beta, free_bits, alpha=1.0):
-
     run_dir = get_run_dir()
-    sample_dir = Path(run_dir) / "results/samples"
-    sample_dir.mkdir(parents=True, exist_ok=True)
-    reconstruct_dir = Path(run_dir) / "results/reconstruction"
-    reconstruct_dir.mkdir(parents=True, exist_ok=True)
-    interpolate_dir = Path(run_dir) / "results/interpolation"
-    interpolate_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir = Path(run_dir) / "ckpt"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
@@ -315,7 +214,6 @@ def run(_run,
     logger.add(TensorBoardLogger(log_dir=log_dir))
     logger.add(SacredLogger(ex, _run))
 
-    melody_decode = MelodyDecode()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     encoder = smg_encoder.BidirectionalLstmEncoder(**encoder_params)
@@ -326,9 +224,9 @@ def run(_run,
     # set betas, even this are the default values, to make it explicit that we use
     # the same values as in the music vae implementation.
     opt = optim.Adam(model.parameters(), lr=initial_lr, betas=(0.9, 0.999))
-    lr_scheduler =lambda step: (initial_lr - min_lr) * lr_decay_rate**step + min_lr
+    lr_scheduler = lambda step: (initial_lr - min_lr) * lr_decay_rate ** step + min_lr
 
-    #dataset = MelodyDataset(melody_dir=melody_dir, melody_length=melody_length,
+    # dataset = MelodyDataset(melody_dir=melody_dir, melody_length=melody_length,
     #                        transforms=MelodyEncode(n_classes=n_classes))
     dataset = FixedLengthMelodyDataset(melody_dir=melody_dir, transforms=MelodyEncode(n_classes=n_classes,
                                                                                       num_special_events=0))
@@ -342,33 +240,14 @@ def run(_run,
     loss_fn = functools.partial(calc_loss, free_bits=free_bits, alpha=alpha)
     sampling_prob_fn = functools.partial(calc_sampling_probabilty, rate=sampling_rate, schedule=sampling_schedule)
 
-    train_step = eval_step = 0
+    train_step = 0
     best_loss = float('inf')
-    for epoch in range(1, num_epochs+1):
+    for epoch in range(1, num_epochs + 1):
         train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval,
                            logger, beta_fn, sampling_prob_fn, accumulated_grad_steps)
-        eval_step, best_loss, new_best = evaluate(epoch, eval_step, model, dl_eval, loss_fn, device,
-                                                  reconstruct_dir,
-                                                  interpolate_dir,
-                                                  melody_decode,
-                                                  logger, best_loss, beta=max_beta)
+        best_loss, new_best = evaluate(epoch, model, dl_eval, loss_fn, device, logger, best_loss, beta=max_beta)
         if new_best:
             save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, opt)
-
-
-        # model.eval()
-        # with torch.no_grad():
-        #     sample_epoch_dir = sample_dir / str(epoch)
-        #     sample_epoch_dir.mkdir()
-        #
-        #     # sample from z space
-        #     z = torch.randn(MAX_N_RESULTS, z_dim).to(device)
-        #     sample = model.decode(z, melody_length).cpu()
-        #     _, sample_argmax = torch.max(sample, dim=-1)
-        #     for i, melody in enumerate(sample_argmax):
-        #         melody = melody.cpu().numpy().astype(np.int8)
-        #         save_melody(melody_decode(melody),
-        #                     str(sample_epoch_dir / "sample_{}".format(i)))
 
 
 @ex.config
