@@ -150,47 +150,70 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     return elbo_loss, r_loss, kl_cost, torch.mean(kl_div)
 
 
-def train(epoch, global_step, model, data_loader, loss_fn, opt, lr_scheduler, device, log_interval, logger, beta_fn, sampling_prob_fn):
+def train(epoch, global_step, model, data_loader, loss_fn, opt,
+          lr_scheduler, device, log_interval, logger, beta_fn, sampling_prob_fn, accumulated_grad_steps):
     model.train()
     start_time = time.time()
 
-    batch_size = data_loader.batch_size
     n_batches = len(data_loader)
-    for batch_idx, x in enumerate(data_loader):
-        x = x.to(device)
+    n_batches = n_batches // accumulated_grad_steps
+    data_gen = iter(data_loader)
+
+    for batch_idx in range(n_batches):
 
         # set sampling prob
         sampling_prob = sampling_prob_fn(global_step)
         model.decoder.sampling_probability = sampling_prob
 
-        opt.zero_grad()
-        x_hat, mu, sigma, sampled_ratio = model.forward(x)
-
+        # calculate beta
         beta = beta_fn(global_step)
-        loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
-        loss.backward()
+
+        opt.zero_grad()
+
+        # scaled losses
+        scaled_loss = 0.0
+        scaled_kl_loss = 0.0
+        scaled_r_loss = 0.0
+        scaled_samped_ratio = 0
+
+        for _ in range(accumulated_grad_steps):
+            x = next(data_gen).to(device)
+
+            x_hat, mu, sigma, sampled_ratio = model.forward(x)
+
+            loss, r_loss, kl_cost, _ = loss_fn(x_hat, mu, sigma, x, beta=beta)
+            loss.backward()
+
+            scaled_loss += loss.item()
+            scaled_kl_loss += kl_cost.item()
+            scaled_r_loss += r_loss.item()
+            scaled_samped_ratio += sampled_ratio
 
         # set learning rate
         lr = lr_scheduler(global_step)
         opt.param_groups[0]['lr'] = lr
         opt.step()
 
-        logger.add_scalar("train.loss", loss.item(), global_step)
+        scaled_loss /= accumulated_grad_steps
+        scaled_kl_loss /= accumulated_grad_steps
+        scaled_r_loss /= accumulated_grad_steps
+        scaled_samped_ratio /= accumulated_grad_steps
+
+        # log statistics
         logger.add_scalar("train.losses/kl_beta", beta, global_step)
-        logger.add_scalar("train.losses/kl_bits", kl_div / np.log(2.0), global_step)
-        logger.add_scalar("train.losses/kl_loss", kl_cost.item(), global_step)
-        logger.add_scalar("train.losses/r_loss", r_loss.item(), global_step)
+        logger.add_scalar("train.loss", scaled_loss, global_step)
+        logger.add_scalar("train.losses/kl_loss", scaled_kl_loss, global_step)
+        logger.add_scalar("train.losses/r_loss", scaled_r_loss, global_step)
         logger.add_scalar("sampling/sampling_probability", sampling_prob, global_step)
-        logger.add_scalar("sampling/train_ratio", sampled_ratio, global_step)
+        logger.add_scalar("sampling/train_ratio", scaled_samped_ratio, global_step)
         logger.add_scalar("lr", lr, global_step)
 
         batch_num = batch_idx + 1
-        if (batch_num) % log_interval == 0 or batch_num == n_batches:
+        if batch_num % log_interval == 0 or batch_num == n_batches:
             # epoch | batch_num/n_batches (finsihed% ) | loss | r_loss | kl_loss | sec
             print("{:3d} | {:4d}/{} ({:3.0f}%) | {:.6f} | {:.6f} | {:.6f} | {:.4f} sec.".format(
                 epoch, batch_num, n_batches, 100. * batch_num / n_batches,
-                loss.item(),  r_loss.item(), kl_cost.item(), time.time() - start_time))
-
+                scaled_loss,  scaled_r_loss, scaled_kl_loss, time.time() - start_time))
         global_step += 1
     return global_step
 
@@ -208,7 +231,7 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
         for batch_idx, x in enumerate(data_loader):
             x = x.to(device)
             x_hat, mu, sigma, sampled_ratio = model.forward(x)
-            loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
+            loss, r_loss, kl_cost, _ = loss_fn(x_hat, mu, sigma, x, beta=beta)
 
             total_loss += loss.item()
             total_r_loss += r_loss.item()
@@ -216,7 +239,6 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
 
             logger.add_scalar("eval.loss", loss.item(), global_step)
             logger.add_scalar("eval.losses/kl_beta", beta, global_step)
-            logger.add_scalar("eval.losses/kl_bits", kl_div / np.log(2.0), global_step)
             logger.add_scalar("eval.losses/kl_loss", kl_cost.item(), global_step)
             logger.add_scalar("eval.losses/r_loss", r_loss.item(), global_step)
             logger.add_scalar("sampling/eval_ratio", sampled_ratio, global_step)
@@ -240,7 +262,6 @@ def evaluate(epoch, global_step, model, data_loader, loss_fn, device, reconstruc
             #         start_melody, end_melody = x[0], x[1]
             #         samples = interpolate(model, start_melody, end_melody, 7, device)
             #         save_interpolation(samples, str(interpolate_dir / "epoch_{}".format(epoch)))
-
             global_step += 1
 
     avg_loss = total_loss / len(data_loader)
@@ -270,7 +291,8 @@ def get_run_dir(_run, run_dir):
 
 @ex.capture
 def run(_run,
-        batch_size, num_epochs, num_workers,
+        batch_size, accumulated_grad_steps,
+        num_epochs, num_workers,
         initial_lr, lr_decay_rate, min_lr,
         melody_dir, melody_length, n_classes,
         sampling_schedule, sampling_rate,
@@ -324,7 +346,7 @@ def run(_run,
     best_loss = float('inf')
     for epoch in range(1, num_epochs+1):
         train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval,
-                           logger, beta_fn, sampling_prob_fn)
+                           logger, beta_fn, sampling_prob_fn, accumulated_grad_steps)
         eval_step, best_loss, new_best = evaluate(epoch, eval_step, model, dl_eval, loss_fn, device,
                                                   reconstruct_dir,
                                                   interpolate_dir,
