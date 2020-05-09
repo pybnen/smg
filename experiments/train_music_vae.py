@@ -72,7 +72,7 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     #   alpha must be set to sequence length
     elbo_loss = alpha * r_loss + beta * kl_cost
 
-    return elbo_loss, r_loss, kl_cost, torch.mean(kl_div)
+    return elbo_loss, r_loss.item(), kl_cost.item()
 
 
 def train(epoch, global_step, model, data_loader, loss_fn, opt,
@@ -95,42 +95,43 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
 
         opt.zero_grad()
 
-        # scaled losses
-        scaled_loss = 0.0
-        scaled_kl_loss = 0.0
-        scaled_r_loss = 0.0
-        scaled_samped_ratio = 0
+        # keep track of some stats
+        stats = {"loss": 0.0, "r_loss": 0.0, "kl_loss": 0.0, "sample_ratio": 0.0}
 
+        # make 'accumulated_grad_steps' forward and backward steps
         for _ in range(accumulated_grad_steps):
             x = next(data_gen).to(device)
 
-            x_hat, mu, sigma, sampled_ratio = model.forward(x)
+            x_hat, mu, sigma, sample_ratio = model.forward(x)
 
-            loss, r_loss, kl_cost, _ = loss_fn(x_hat, mu, sigma, x, beta=beta)
+            loss, r_loss, kl_cost = loss_fn(x_hat, mu, sigma, x, beta=beta)
+            # normalize loss
+            loss = loss / accumulated_grad_steps
             loss.backward()
 
-            scaled_loss += loss.item()
-            scaled_kl_loss += kl_cost.item()
-            scaled_r_loss += r_loss.item()
-            scaled_samped_ratio += sampled_ratio
+            stats["loss"] += loss.item()
+            stats["r_loss"] += r_loss
+            stats["kl_loss"] += kl_cost
+            stats["sample_ratio"] += sample_ratio
 
         # set learning rate
         lr = lr_scheduler(global_step)
         opt.param_groups[0]['lr'] = lr
         opt.step()
 
-        scaled_loss /= accumulated_grad_steps
-        scaled_kl_loss /= accumulated_grad_steps
-        scaled_r_loss /= accumulated_grad_steps
-        scaled_samped_ratio /= accumulated_grad_steps
+        # before logging, normalize stats, note loss is already normalized
+        stats["r_loss"] /= accumulated_grad_steps
+        stats["kl_loss"] /= accumulated_grad_steps
+        stats["sample_ratio"] /= accumulated_grad_steps
 
         # log statistics
+        logger.add_scalar("train.loss", stats["loss"], global_step)
+        logger.add_scalar("train.losses/kl_loss", stats["kl_loss"], global_step)
+        logger.add_scalar("train.losses/r_loss", stats["r_loss"], global_step)
+        logger.add_scalar("sampling/train_ratio", stats["sample_ratio"], global_step)
+
         logger.add_scalar("train.losses/kl_beta", beta, global_step)
-        logger.add_scalar("train.loss", scaled_loss, global_step)
-        logger.add_scalar("train.losses/kl_loss", scaled_kl_loss, global_step)
-        logger.add_scalar("train.losses/r_loss", scaled_r_loss, global_step)
         logger.add_scalar("sampling/sampling_probability", sampling_prob, global_step)
-        logger.add_scalar("sampling/train_ratio", scaled_samped_ratio, global_step)
         logger.add_scalar("lr", lr, global_step)
 
         batch_num = batch_idx + 1
