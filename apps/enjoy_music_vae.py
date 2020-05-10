@@ -382,7 +382,6 @@ def main():
             else:
                 print("Sample input from previous output.")
                 model.decoder.sampling_probability = 1.0
-
             print("Temperature for sampling is {}".format(model.decoder.temperature))
 
             if args.command == "reconstruct":

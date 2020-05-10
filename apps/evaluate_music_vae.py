@@ -1,6 +1,7 @@
 from pathlib import Path
 import argparse
 
+import os
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -15,10 +16,14 @@ parser = argparse.ArgumentParser(description="Evaluate checkpoint with a given d
 parser.add_argument("--n_classes", type=int, default=90)
 parser.add_argument("--batch_size", type=int, default=512)
 parser.add_argument("--num_workers", type=int, default=0)
-parser.add_argument("--temperature", type=float, default=1.0, help="Used for sampling next input from current output")
+parser.add_argument("--ckpt_path", type=str,
+                    help="Path to checkpoint, if not set environment variable CKPT_PATH is used.")
+parser.add_argument("--temperature", type=float, default=1.0,
+                    help="Used for sampling next input from current output, lower temperature favours best guess, very low temp would basically result in argmax.")  # noqa
+parser.add_argument("--teacher_forcing", "-t", action="store_true", default=False,
+                    help="Use teacher forcing")
 parser.add_argument("--valid_split", type=float, default=0.2, help="Split ratio between train/eval set, set to 0.0 if not split should be made.")  # noqa
 parser.add_argument("--use_train", action="store_true", default=False, help="Use train set instead of eval set, applys only if valid split is given, default False")  # noqa
-parser.add_argument("ckpt_path", type=str, help="Path to checkpoint")
 parser.add_argument("dataset_dirname", type=str, help="Directory name containing dataset")
 
 args = parser.parse_args()
@@ -96,8 +101,9 @@ def evaluate(model, device, dataset=None, data_loader=None, log_interval=None):
 
 
 def main():
-    if not Path(args.ckpt_path).is_file():
-        print("Path to checkpoint is not a file. '{}'".format(args.ckpt_path))
+    ckpt_path = args.ckpt_path or os.getenv("CKPT_PATH")
+    if not isinstance(ckpt_path, str) or not Path(ckpt_path).is_file():
+        print("Path to checkpoint is not a file. '{}'".format(ckpt_path))
         return
 
     if not Path(args.dataset_dirname).is_dir():
@@ -115,8 +121,19 @@ def main():
                              shuffle=False, drop_last=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model_from_ckpt(args.ckpt_path, device)
+    print("Load model from checkpoint '{}'".format(ckpt_path))
+    model = load_model_from_ckpt(ckpt_path, device)
     model.decoder.temperature = args.temperature
+    model.decoder.sampling_probability = 0.0 if args.teacher_forcing else 1.0
+    # allow for teacher forcing in eval setting
+    model.decoder.eval_allow_teacher_forcing = True
+    if args.teacher_forcing:
+        print("Use teacher forcing")
+        model.decoder.sampling_probability = 0.0
+    else:
+        print("Sample input from previous output.")
+        model.decoder.sampling_probability = 1.0
+    print("Temperature for sampling is {}".format(model.decoder.temperature))
 
     _ = evaluate(model, device, data_loader=data_loader, log_interval=len(data_loader) // 10)
 
