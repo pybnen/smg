@@ -99,6 +99,8 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
         stats = {"loss": 0.0, "r_loss": 0.0, "kl_loss": 0.0, "sample_ratio": 0.0}
 
         # make 'accumulated_grad_steps' forward and backward steps
+        # TODO: when used accumulated_grad_steps=16 loss and r_loss returned nan, maybe there
+        #   is still a bug in the implementation
         for _ in range(accumulated_grad_steps):
             x = next(data_gen).to(device)
 
@@ -243,12 +245,17 @@ def run(_run,
 
     train_step = 0
     best_loss = float('inf')
-    for epoch in range(1, num_epochs + 1):
-        train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval,
-                           logger, beta_fn, sampling_prob_fn, accumulated_grad_steps)
-        best_loss, new_best = evaluate(epoch, model, dl_eval, loss_fn, device, logger, best_loss, beta=max_beta)
-        if new_best:
-            save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, opt)
+
+    try:
+        for epoch in range(1, num_epochs + 1):
+            train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval,
+                               logger, beta_fn, sampling_prob_fn, accumulated_grad_steps)
+            best_loss, new_best = evaluate(epoch, model, dl_eval, loss_fn, device, logger, best_loss, beta=max_beta)
+            if new_best:
+                save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, opt)
+    except KeyboardInterrupt:
+        print("Keyboard interrupt on epoch {}".format(epoch))
+        save_checkpoint(str(ckpt_dir / "model_ckpt_interrupt.pth"), epoch, model, opt)
 
 
 @ex.config
