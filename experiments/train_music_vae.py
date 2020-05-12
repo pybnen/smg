@@ -12,7 +12,6 @@ from torch.utils.data import DataLoader
 
 from sacred import Experiment
 from sacred.observers import FileStorageObserver
-
 import pypianoroll as pp
 
 from smg.common.loggers import CompositeLogger, TensorBoardLogger, SacredLogger
@@ -22,6 +21,12 @@ from smg.models.music_vae.music_vae import MusicVAE
 from smg.models.music_vae import encoder as smg_encoder
 from smg.models.music_vae import decoder as smg_decoder
 from smg.ingredients.data import data_ingredient, dataset_train_valid_split
+
+try:
+    from apex import amp
+    APEX_AVAILABLE = True
+except ModuleNotFoundError:
+    APEX_AVAILABLE = False
 
 MAX_N_RESULTS = 4
 
@@ -76,7 +81,8 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
 
 
 def train(epoch, global_step, model, data_loader, loss_fn, opt,
-          lr_scheduler, device, log_interval, logger, beta_fn, sampling_prob_fn, accumulated_grad_steps):
+          lr_scheduler, device, log_interval, logger, beta_fn,
+          sampling_prob_fn, accumulated_grad_steps, use_apex):
     model.train()
     start_time = time.time()
 
@@ -109,7 +115,12 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
             loss, r_loss, kl_cost = loss_fn(x_hat, mu, sigma, x, beta=beta)
             # normalize loss
             loss = loss / accumulated_grad_steps
-            loss.backward()
+
+            if use_apex:
+                with amp.scale_loss(loss, opt) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
 
             stats["loss"] += loss.item()
             stats["r_loss"] += r_loss
@@ -205,9 +216,15 @@ def run(_run,
         initial_lr, lr_decay_rate, min_lr,
         melody_dir, melody_length, n_classes,
         sampling_schedule, sampling_rate,
-        log_interval,
-        z_dim, encoder_params, decoder_params,
-        beta_rate, max_beta, free_bits, alpha=1.0):
+        log_interval, z_dim,
+        encoder_params, decoder_params,
+        beta_rate, max_beta, free_bits, alpha=1.0,
+        use_apex=False, opt_level="O1"):
+
+    if use_apex and not APEX_AVAILABLE:
+        use_apex = False
+        print("Mixed precision training is not available, install apex.")
+
     run_dir = get_run_dir()
     ckpt_dir = Path(run_dir) / "ckpt"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -229,6 +246,13 @@ def run(_run,
     opt = optim.Adam(model.parameters(), lr=initial_lr, betas=(0.9, 0.999))
     lr_scheduler = lambda step: (initial_lr - min_lr) * lr_decay_rate ** step + min_lr
 
+    if use_apex:
+        keep_batchnorm_fp32 = True if opt_level != "O1" else None
+        model, opt = amp.initialize(
+            model, opt, opt_level=opt_level,
+            keep_batchnorm_fp32=keep_batchnorm_fp32, loss_scale="dynamic"
+        )
+
     # dataset = MelodyDataset(melody_dir=melody_dir, melody_length=melody_length,
     #                        transforms=MelodyEncode(n_classes=n_classes))
     dataset = FixedLengthMelodyDataset(melody_dir=melody_dir, transforms=MelodyEncode(n_classes=n_classes,
@@ -249,7 +273,7 @@ def run(_run,
     try:
         for epoch in range(1, num_epochs + 1):
             train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval,
-                               logger, beta_fn, sampling_prob_fn, accumulated_grad_steps)
+                               logger, beta_fn, sampling_prob_fn, accumulated_grad_steps, use_apex)
             best_loss, new_best = evaluate(epoch, model, dl_eval, loss_fn, device, logger, best_loss, beta=max_beta)
             if new_best:
                 save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, opt)
