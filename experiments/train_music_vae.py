@@ -34,14 +34,35 @@ MAX_N_RESULTS = 4
 ex = Experiment('train_music_vae', ingredients=[data_ingredient])
 
 
-def save_checkpoint(file_path, epoch, model, optimizer):
+def save_checkpoint(file_path, epoch, model, optimizer, use_apex=False):
     """Save current training state"""
     ckpt = {
-        'epoch': epoch,
-        'model': model.create_ckpt(),
-        'optimizer': optimizer.state_dict()
+        "epoch": epoch,
+        "model": model.create_ckpt(),
+        "optimizer": optimizer.state_dict()
     }
+    if use_apex:
+        ckpt["apex"] = amp.state_dict()
     torch.save(ckpt, file_path)
+
+
+def load_checkpoint(ckpt_path, model, opt, device, use_apex=False):
+    ckpt = torch.load(ckpt_path, map_location=device)
+    model_ckpt = ckpt["model"]
+    # load model state
+    model.encoder.load_state_dict(model_ckpt["encoder"]["state"])
+    model.decoder.load_state_dict(model_ckpt["decoder"]["state"])
+
+    # load optimizer state
+    opt.load_state_dict(ckpt["optimizer"])
+
+    if use_apex:
+        if "apex" not in ckpt:
+            raise ValueError("No apex state found in checkpoint")
+        amp.load_state_dict(ckpt["apex"])
+
+    train_step = ckpt["train_step"] if "train_step" in ckpt else None
+    return ckpt["epoch"], train_step
 
 
 def calc_sampling_probabilty(step, rate, schedule):
@@ -219,7 +240,7 @@ def run(_run,
         log_interval, z_dim,
         encoder_params, decoder_params,
         beta_rate, max_beta, free_bits, alpha=1.0,
-        use_apex=False, opt_level="O1"):
+        use_apex=False, opt_level="O1", ckpt_path=None):
 
     if use_apex and not APEX_AVAILABLE:
         use_apex = False
@@ -267,11 +288,18 @@ def run(_run,
     loss_fn = functools.partial(calc_loss, free_bits=free_bits, alpha=alpha)
     sampling_prob_fn = functools.partial(calc_sampling_probabilty, rate=sampling_rate, schedule=sampling_schedule)
 
+    start_epoch = 0
     train_step = 0
-    best_loss = float('inf')
+    if ckpt_path is not None:
+        start_epoch, train_step = load_checkpoint(ckpt_path, model, opt, device, use_apex)
+        if train_step is None:
+            # if train step was not saved, use start of epoch
+            train_step = int(start_epoch * (len(dl_train) // accumulated_grad_steps))
 
+    best_loss = float('inf')
     try:
-        for epoch in range(1, num_epochs + 1):
+        print("Start training from epoch {} with step {}".format(start_epoch, train_step))
+        for epoch in range(start_epoch + 1, num_epochs + 1):
             train_step = train(epoch, train_step, model, dl_train, loss_fn, opt, lr_scheduler, device, log_interval,
                                logger, beta_fn, sampling_prob_fn, accumulated_grad_steps, use_apex)
             best_loss, new_best = evaluate(epoch, model, dl_eval, loss_fn, device, logger, best_loss, beta=max_beta)
