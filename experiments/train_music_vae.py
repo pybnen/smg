@@ -305,6 +305,9 @@ def run(_run,
             best_loss, new_best = evaluate(epoch, model, dl_eval, loss_fn, device, logger, best_loss, beta=max_beta)
             if new_best:
                 save_checkpoint(str(ckpt_dir / "model_ckpt_best.pth"), epoch, model, opt)
+            else:
+                # save the current model anyway
+                save_checkpoint(str(ckpt_dir / "model_ckpt_current.pth"), epoch, model, opt)
     except KeyboardInterrupt:
         print("Keyboard interrupt on epoch {}".format(epoch))
         save_checkpoint(str(ckpt_dir / "model_ckpt_interrupt.pth"), epoch, model, opt)
