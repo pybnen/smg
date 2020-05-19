@@ -1,4 +1,5 @@
 import torch
+import torch.distributions
 import torch.nn as nn
 
 
@@ -27,7 +28,7 @@ class TrainHelper:
             self.initial_input = torch.cat((self.initial_input, self.aux_input[:, 0]), dim=-1)
 
     def initialize(self):
-        return self.initial_input
+        return self.next_inputs(-1, self.zero_input)
 
     def next_inputs(self, time, outputs):
         next_time = time + 1
@@ -40,7 +41,10 @@ class TrainHelper:
         else:
             self.sampled_cnt += 1
             next_inputs = outputs
-            if self.next_inputs_fn is not None:
+            # time == -1 should only been called from initialize method,
+            #  in this case the output is the zeros tensor, and the next_inputs_fn method
+            #  should not be applied
+            if self.next_inputs_fn is not None and time != -1:
                 next_inputs = self.next_inputs_fn(next_inputs)
 
         if self.aux_input is not None:
@@ -75,6 +79,12 @@ class LstmDecoder(nn.Module):
 
         self.lstm_layer = nn.LSTM(input_size, hidden_size, bias=True, num_layers=num_layers)
         self.output_layer = nn.Linear(hidden_size, output_size, bias=True)
+
+    def set_sampling_probability(self, sampling_probability):
+        self.sampling_probability = sampling_probability
+
+    def get_sampling_probability(self):
+        return self.sampling_probability
 
     def next_inputs(self, inputs):
         logits = inputs / self.temperature
@@ -120,12 +130,13 @@ class LstmDecoder(nn.Module):
             next_inputs = helper.next_inputs(t, current_output.detach())  # detach is very important
 
         sequence_output = torch.stack(sequence_output, dim=1)
-        return sequence_output, helper.sampled_cnt / float(sequence_output.size(1) - 1)
+        return sequence_output, helper.sampled_cnt / float(sequence_output.size(1))
 
-    def create_ckpt(self):
+    def create_ckpt(self, with_state=True):
         ckpt = {"clazz": ".".join([self.__module__, self.__class__.__name__]),
-                "state": self.state_dict(),
                 "kwargs": self.kwargs}
+        if with_state:
+            ckpt["state"] = self.state_dict()
         return ckpt
 
 
