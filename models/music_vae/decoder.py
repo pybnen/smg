@@ -140,73 +140,145 @@ class LstmDecoder(nn.Module):
         return ckpt
 
 
-if __name__ == "__main__":
-    # TODO adapt to changes
-    from copy import deepcopy
-    import numpy as np
+class HierarchicalDecoder(nn.Module):
+    def __init__(self, num_subsequences, z_dim, hidden_size, output_decoder, num_layers=1):
+        super().__init__()
+
+        self.num_subsequences = num_subsequences
+        self.z_dim = z_dim
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+
+        self.kwargs = {"num_subsequences": num_subsequences, "z_dim": z_dim, "hidden_size": hidden_size,
+                       "num_layers": num_layers, "output_decoder_ckpt": output_decoder.create_ckpt(with_state=False)}
+
+        n_state_units = num_layers * hidden_size * 2  # each layer has cell and hidden units
+        self.initial_state_embed = nn.Sequential(
+            nn.Linear(z_dim, n_state_units, bias=True),
+            nn.Tanh())
+
+        # magenta has option for an autoregressive conductor, but the config used for 16bar melody passes
+        # a zero tensor as input, thus use input_size 1 (zero doesn't work)
+        self.conductor_rnn = nn.LSTM(input_size=1, hidden_size=hidden_size, bias=True, num_layers=num_layers)
+
+        # NOTE: from the MusicVAE paper
+        # "[...] we use a two-layer unidirectional LSTM for the conductor with a hidden state size of
+        # 1024 and 512 output dimensions."
+        # In the magenta source code, I don't see the mapping from 1024 hidden size to 512 output size,
+        # in my understanding (which could very well be wrong) this has to be achieved by a fully connected layer
+        # on top of each recurrent output.
+        # TODO debug the magenta code and see if output of hierarchical lstm has 1024 or really 512
+
+        self.output_decoder = output_decoder
+
+    def set_sampling_probability(self, sampling_probability):
+        self.output_decoder.set_sampling_probability(sampling_probability)
+
+    def get_sampling_probability(self):
+        return self.output_decoder.get_sampling_probability()
+
+    def forward(self, z, sequence_input=None, sequence_length=None):
+        batch_size, _ = z.size()
+        sequence_length = sequence_length or sequence_input.size(1)
+        assert(sequence_length % self.num_subsequences == 0)
+        subsequence_length = int(sequence_length / self.num_subsequences)
+
+        # get initial states for conductor from latent space z
+        initial_states = self.initial_state_embed(z)
+        ht, ct = initial_states.view(batch_size, self.num_layers, 2, -1).permute(2, 1, 0, 3).contiguous()
+
+        subsequences = None
+        if sequence_input is not None:
+            output_size = sequence_input.size(-1)
+            subsequences = sequence_input.view(batch_size, self.num_subsequences, -1, output_size)
+            assert(subsequences.size(2) == subsequence_length)
+
+        sequence_output = []
+        sample_ratios = 0.0
+        for i in range(self.num_subsequences):
+            # get a "empty" input for one time step
+            next_input = torch.zeros((1, batch_size, 1)).type(z.type())
+
+            _, (ht, ct) = self.conductor_rnn(next_input, (ht, ct))
+            # TODO: there may or may not be an linear output layer (see TODO in init method)
+            current_c = ht[-1]
+
+            # use conductor embedding to produce first subsequencen
+
+            subsequence_input = subsequences[:, i] if subsequences is not None else None
+            subsequence_output, sample_ratio = self.output_decoder(current_c,
+                                                                   sequence_input=subsequence_input,
+                                                                   sequence_length=subsequence_length)
+            sample_ratios += sample_ratio
+            sequence_output.append(subsequence_output)
+        return torch.cat(sequence_output, dim=1), sample_ratios / self.num_subsequences
+
+    def create_ckpt(self, with_state=True):
+        ckpt = {"clazz": ".".join([self.__module__, self.__class__.__name__]),
+                "kwargs": self.kwargs}
+        if with_state:
+            ckpt["state"] = self.state_dict()
+        return ckpt
+
+
+def get_hierarchical_decoder_for_testing():
+    z_dim = 8
+    n_classes = 5
+    c_dim = 12
+    hidden_size = 3
+
+    core_decoder = LstmDecoder(input_size=n_classes + c_dim,
+                               hidden_size=hidden_size,
+                               output_size=n_classes,
+                               num_layers=2,
+                               z_dim=c_dim)
+    return HierarchicalDecoder(num_subsequences=3, z_dim=z_dim,
+                               hidden_size=c_dim, output_decoder=core_decoder, num_layers=2)
+
+
+def get_lstm_decoder_for_testing():
+    z_dim = 8
+    n_classes = 5
+    hidden_size = 2
+    return LstmDecoder(n_classes + z_dim, hidden_size, n_classes, num_layers=2, z_dim=z_dim)
+
+
+def test_decoder(decoder):
+    import torch.nn.functional as F
     torch.manual_seed(0)
 
-    batch_size = 20
-    z_size = 10
-    seq_len = 5
+    print("Test decoder {}".format(repr(decoder)))
+    print(repr(decoder.create_ckpt(with_state=False)))
+    print("\n--------------------------------------------\n")
 
-    in_features = 10
-    out_features = 5
-    num_layers = 10
+    z_dim = 8
+    n_classes = 5
+    batch_size = 6
+    sequence_length = 9
 
-    decoder = LstmDecoder(in_features, out_features, z_size, num_layers=num_layers, teacher_forcing=True)
+    z = torch.randn(batch_size, z_dim)
+    with torch.no_grad():
+        # test decode without input (e.g. pure sampling)
+        x_hat, sample_ratio = decoder(z, sequence_length=sequence_length)
+        assert (sample_ratio == 1.0)
+        assert (x_hat.size() == torch.Size([batch_size, sequence_length, n_classes]))
 
-    # now i want to check if an lstm would net me the same result
-    lstm = nn.LSTM(in_features, z_size, num_layers=num_layers)
-    # copy weights
-    for i in range(num_layers):
-        cell = decoder.cells[i]
-        # set ih
-        decoder_param = deepcopy(cell.weight_ih)
-        setattr(lstm, "weight_ih_l{}".format(i), decoder_param)
+        # test decode with input (e.g. teacher forcing)
+        decoder.set_sampling_probability(0.0)  # (= teacher forcing)
+        x = torch.distributions.one_hot_categorical.OneHotCategorical(
+            probs=torch.ones((batch_size, sequence_length, n_classes))).sample()  # noqa
+        shifted_x = F.pad(x, pad=[0, 0, 1, 0, 0, 0])[:, :-1]  # add zero vector at beginning each sequence
+        x_hat, sample_ratio = decoder(z, sequence_input=shifted_x)
+        assert (sample_ratio == 0.0)
+        assert (x_hat.size() == torch.Size([batch_size, sequence_length, n_classes]))
 
-        # set hh
-        decoder_param = deepcopy(cell.weight_hh)
-        setattr(lstm, "weight_hh_l{}".format(i), decoder_param)
-
-        # set bias ih
-        decoder_param = deepcopy(cell.bias_ih)
-        setattr(lstm, "bias_ih_l{}".format(i), decoder_param)
-
-        # set bias hh
-        decoder_param = deepcopy(cell.bias_hh)
-        setattr(lstm, "bias_hh_l{}".format(i), decoder_param)
-
-    for _ in range(10):
-        z = torch.randn(batch_size, z_size)
-        x = torch.randint(0, 130, size=(batch_size, seq_len, in_features)).float()
-        x_hat1 = decoder(z, x=x)
-
-        new_x = torch.cat([torch.zeros((batch_size, 1, in_features)), x[:, :-1, :]], dim=1)
-        c0 = torch.zeros((num_layers, batch_size, z_size))
-        h0 = torch.stack([z]*num_layers, dim=0)
-
-        seq_out, (h_t, c_t) = lstm(new_x.permute((1, 0, 2)), (h0, c0))
-        seq_out = seq_out.permute((1, 0, 2))
-        x_hat2 = []
-        for i in range(seq_len):
-            x_hat2.append(decoder.linear(seq_out[:, i, :]))
-        x_hat2 = torch.stack(x_hat2, dim=1)
-
-        assert(np.allclose(x_hat1.detach().numpy(), x_hat2.detach().numpy()))
-    print('done')
-
-    # Test teacher_forcing False
-    # decoder = LstmDecoder(in_features, out_features, z_size, num_layers=1, teacher_forcing=False)
-    # print(list(decoder.named_parameters()))
-    #
-
-    # x_hat = decoder(z, seq_length=seq_length)
-    # print("x_hat.shape = {}".format(x_hat.size()))
-    # print("x_hat", x_hat)
+        # test decode with input, but dont use teacher forcing
+        decoder.set_sampling_probability(1.0)
+        x_hat, sample_ratio = decoder(z, sequence_input=shifted_x)
+        assert (sample_ratio == 1.0)
+        assert (x_hat.size() == torch.Size([batch_size, sequence_length, n_classes]))
 
 
-
-
-
-
+if __name__ == "__main__":
+    test_decoder(get_lstm_decoder_for_testing())
+    test_decoder(get_hierarchical_decoder_for_testing())
