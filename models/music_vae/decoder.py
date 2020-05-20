@@ -86,6 +86,15 @@ class LstmDecoder(nn.Module):
     def get_sampling_probability(self):
         return self.sampling_probability
 
+    def set_temperature(self, temperature):
+        self.temperature = temperature
+
+    def get_temperature(self):
+        return self.temperature
+
+    def allow_teacher_forcing_for_evaluation(self, allow):
+        self.eval_allow_teacher_forcing = allow
+
     def next_inputs(self, inputs):
         logits = inputs / self.temperature
 
@@ -177,6 +186,15 @@ class HierarchicalDecoder(nn.Module):
     def get_sampling_probability(self):
         return self.output_decoder.get_sampling_probability()
 
+    def set_temperature(self, temperature):
+        self.output_decoder.temperature = temperature
+
+    def get_temperature(self):
+        return self.output_decoder.temperature
+
+    def allow_teacher_forcing_for_evaluation(self, allow):
+        self.output_decoder.allow_teacher_forcing_for_evaluation(allow)
+
     def forward(self, z, sequence_input=None, sequence_length=None):
         batch_size, _ = z.size()
         sequence_length = sequence_length or sequence_input.size(1)
@@ -202,8 +220,6 @@ class HierarchicalDecoder(nn.Module):
             _, (ht, ct) = self.conductor_rnn(next_input, (ht, ct))
             # TODO: there may or may not be an linear output layer (see TODO in init method)
             current_c = ht[-1]
-
-            # use conductor embedding to produce first subsequencen
 
             subsequence_input = subsequences[:, i] if subsequences is not None else None
             subsequence_output, sample_ratio = self.output_decoder(current_c,

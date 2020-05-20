@@ -34,7 +34,7 @@ class MusicVAE(nn.Module):
         z = self.reparameterize(mu, sigma)
 
         # add a `start token` at the beginning of each sequence and truncate last time step
-        decoder_input = F.pad(input_sequence, pad=(0, 0, 1, 0, 0, 0))[:, :-1]
+        decoder_input = F.pad(input_sequence, pad=[0, 0, 1, 0, 0, 0])[:, :-1]
         x_hat, sampled_ratio = self.decode(z, input_sequence=decoder_input, sequence_length=seq_length)
         return x_hat, mu, sigma, sampled_ratio
 
@@ -45,12 +45,18 @@ class MusicVAE(nn.Module):
 
     @classmethod
     def load_from_ckpt(clazz, ckpt):
-        #ckpt = torch.load(ckpt_file, map_location=device)
-
         encoder = common.load_class_by_name(ckpt["encoder"]["clazz"], **ckpt['encoder']['kwargs'])
         encoder.load_state_dict(ckpt["encoder"]['state'])
 
-        decoder = common.load_class_by_name(ckpt["decoder"]["clazz"], **ckpt['decoder']['kwargs'])
+        decoder_clazz = ckpt["decoder"]["clazz"]
+        use_hier = decoder_clazz.find("HierarchicalDecoder") != -1
+        if use_hier:
+            output_decoder_ckpt = ckpt['decoder']['kwargs'].pop('output_decoder_ckpt')
+            output_decoder = common.load_class_by_name(output_decoder_ckpt["clazz"], **output_decoder_ckpt['kwargs'])
+            decoder = common.load_class_by_name(decoder_clazz, output_decoder=output_decoder, **ckpt['decoder']['kwargs'])  # noqa
+        else:
+            decoder = common.load_class_by_name(decoder_clazz, **ckpt['decoder']['kwargs'])
+
         decoder.load_state_dict(ckpt["decoder"]['state'])
 
         return clazz(encoder=encoder, decoder=decoder)

@@ -115,7 +115,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
 
         # set sampling prob
         sampling_prob = sampling_prob_fn(global_step)
-        model.decoder.sampling_probability = sampling_prob
+        model.decoder.set_sampling_probability(sampling_prob)
 
         # calculate beta
         beta = beta_fn(global_step)
@@ -237,8 +237,8 @@ def run(_run,
         initial_lr, lr_decay_rate, min_lr,
         melody_dir, melody_length, n_classes,
         sampling_schedule, sampling_rate,
-        log_interval, z_dim,
-        encoder_params, decoder_params,
+        log_interval,
+        encoder_params, use_hier, decoder_params,
         beta_rate, max_beta, free_bits, alpha=1.0,
         use_apex=False, opt_level="O1", ckpt_path=None):
 
@@ -258,7 +258,15 @@ def run(_run,
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     encoder = smg_encoder.BidirectionalLstmEncoder(**encoder_params)
-    decoder = smg_decoder.LstmDecoder(**decoder_params)
+
+    if use_hier:
+        decoder_params = dict(decoder_params)
+        output_decoder_params = decoder_params.pop("output_decoder_params")
+        output_decoder = smg_decoder.LstmDecoder(**output_decoder_params)
+        decoder = smg_decoder.HierarchicalDecoder(output_decoder=output_decoder, **decoder_params)
+    else:
+        decoder = smg_decoder.LstmDecoder(**decoder_params)
+
     model = MusicVAE(encoder=encoder, decoder=decoder)
     model = model.to(device)
 

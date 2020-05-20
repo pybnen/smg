@@ -21,6 +21,7 @@ def add_ckpt_args(parser):
 parser = argparse.ArgumentParser(description="Whats not to enjoy in an freshly trained MusicVAE!")
 # TODO better way to get this value, should be in model and dataset
 parser.add_argument("--n_classes", type=int, default=90)
+parser.add_argument("--melody_length", type=int, default=32)
 
 subparsers = parser.add_subparsers(title="commands", dest='command', required=True)
 
@@ -73,7 +74,7 @@ import pretty_midi
 
 
 STEPS_PER_BAR = 16
-MELODY_LENGTH = 32
+MELODY_LENGTH = args.melody_length  # 32
 
 MIN_PITCH = 21
 MAX_PITCH = 108
@@ -343,7 +344,7 @@ def sample_cmd(model, device, sequence_length, seed_melody_info=None, out_dirnam
         if out_dirname is not None:
             fileroot = "sample_len{}".format(sequence_length)
             if seed_melody_info is not None:
-                fileroot += "_{}_{}_{}".format(midi_path, melody_idx, start_bar)
+                fileroot += "_{}_{}_{}".format(Path(midi_path).stem, melody_idx, start_bar)
 
             if to_midi:
                 pm = melody_lib.melody_to_midi(out_melody)
@@ -372,17 +373,15 @@ def main():
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             print("Load model from checkpoint '{}'".format(ckpt_path))
             model = load_model_from_ckpt(ckpt_path, device)
-            model.decoder.temperature = args.temperature
-            model.decoder.sampling_probability = 0.0 if args.teacher_forcing else 1.0
-            # allow for teacher forcing in eval setting
-            model.decoder.eval_allow_teacher_forcing = True
+            model.decoder.set_temperature(args.temperature)
+            model.decoder.allow_teacher_forcing_for_evaluation(True)
             if args.teacher_forcing:
                 print("Use teacher forcing")
-                model.decoder.sampling_probability = 0.0
+                model.decoder.set_sampling_probability(0.0)
             else:
                 print("Sample input from previous output.")
-                model.decoder.sampling_probability = 1.0
-            print("Temperature for sampling is {}".format(model.decoder.temperature))
+                model.decoder.set_sampling_probability(1.0)
+            print("Temperature for sampling is {}".format(model.decoder.get_temperature()))
 
             if args.command == "reconstruct":
                 reconstruct(model, device, args.melody_info, out_dirname=out_dirname)

@@ -123,19 +123,21 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Load model from checkpoint '{}'".format(ckpt_path))
     model = load_model_from_ckpt(ckpt_path, device)
-    model.decoder.temperature = args.temperature
-    model.decoder.sampling_probability = 0.0 if args.teacher_forcing else 1.0
-    # allow for teacher forcing in eval setting
-    model.decoder.eval_allow_teacher_forcing = True
+    model.decoder.set_temperature(args.temperature)
+    model.decoder.allow_teacher_forcing_for_evaluation(True)
     if args.teacher_forcing:
         print("Use teacher forcing")
-        model.decoder.sampling_probability = 0.0
+        model.decoder.set_sampling_probability(0.0)
     else:
         print("Sample input from previous output.")
-        model.decoder.sampling_probability = 1.0
-    print("Temperature for sampling is {}".format(model.decoder.temperature))
+        model.decoder.set_sampling_probability(1.0)
+    print("Temperature for sampling is {}".format(model.decoder.get_temperature()))
 
-    _ = evaluate(model, device, data_loader=data_loader, log_interval=len(data_loader) // 10)
+    log_interval = len(data_loader) // 10
+    if log_interval <= 0:
+        log_interval = 1
+
+    _ = evaluate(model, device, data_loader=data_loader, log_interval=log_interval)
 
 
 if __name__ == "__main__":
