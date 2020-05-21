@@ -18,10 +18,17 @@ def add_ckpt_args(parser):
                         help="Use teacher forcing")
 
 
+def add_shared_args(parser):
+    add_ckpt_args(parser)
+    add_output_args(parser)
+    parser.add_argument("--melody_length", type=int, default=32)
+    parser.add_argument("--to-midi", "-m", action="store_true", default=False,
+                        help="Create midi file in plot dir.")
+
+
 parser = argparse.ArgumentParser(description="Whats not to enjoy in an freshly trained MusicVAE!")
 # TODO better way to get this value, should be in model and dataset
 parser.add_argument("--n_classes", type=int, default=90)
-parser.add_argument("--melody_length", type=int, default=32)
 
 subparsers = parser.add_subparsers(title="commands", dest='command', required=True)
 
@@ -30,22 +37,17 @@ add_output_args(list_melodies_parser)
 list_melodies_parser.add_argument("midi_path", type=str, help="Path of midi file.")
 
 reconstruct_parser = subparsers.add_parser("reconstruct", help="Reconstruct a given melodie, with a delicious MusicVAE.")  # noqa
-add_ckpt_args(reconstruct_parser)
-add_output_args(reconstruct_parser)
+add_shared_args(reconstruct_parser)
 reconstruct_parser.add_argument("melody_info", type=str, help="Comma separated list, no spaces in between containing: path of midi file, melody index and start bar.")  # noqa
 
 interpolate_parser = subparsers.add_parser("interpolate", help="Interpolate between two melodies")
-add_ckpt_args(interpolate_parser)
-add_output_args(interpolate_parser)
-interpolate_parser.add_argument("--to-midi", "-m", action="store_true", default=False, help="Create midi file in plot dir.")  # noqa
+add_shared_args(interpolate_parser)
 interpolate_parser.add_argument("--num_steps", type=int, default=7, help="Interpolation steps, including start and end")  # noqa
 interpolate_parser.add_argument("start_melody_info", type=str,help="Comma separated list, no spaces in between containing: path of midi file, melody index and start bar.")  # noqa
 interpolate_parser.add_argument("end_melody_info", type=str, help="Comma separated list, no spaces in between containing: path of midi file, melody index and start bar.")  # noqa
 
 sample_parser = subparsers.add_parser("sample", help="Sampling is what makes the world go round, woudn't want to eat pancakes every day, would you? Well actually...")  # noqa
-add_ckpt_args(sample_parser)
-add_output_args(sample_parser)
-sample_parser.add_argument("--to-midi", "-m", action="store_true", default=False, help="Create midi file in plot dir.")  # noqa
+add_shared_args(sample_parser)
 sample_parser.add_argument("--seed", type=str, help="Comma separated list, no spaces in between containing: path of midi file, melody index and start bar.")  # noqa
 sample_parser.add_argument("--length", "-l", type=int, default=32, help="Sequence Length.")
 

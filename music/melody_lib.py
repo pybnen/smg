@@ -301,7 +301,7 @@ def process_midi(filename, pm):
     return notes
 
 
-def melody_to_midi(melody, velocity=100, program=0):
+def melody_to_midi(melody, velocity=80, program=0):
     pm = pretty_midi.PrettyMIDI()
     instrument = pretty_midi.Instrument(program=program)
 
@@ -346,7 +346,7 @@ def melody_to_midi(melody, velocity=100, program=0):
     return pm
 
 
-def melody_to_pianoroll(melody, velocity=100):
+def melody_to_pianoroll(melody, velocity=80):
     pianoroll = np.zeros((len(melody), 128))
     prev_event = -1
     for i, event in enumerate(melody):
