@@ -55,8 +55,8 @@ def decode_melody(melody):
 
 
 def log_reconstruction(logger, tag, pred_sequence, target_sequence, step):
-    pred_sequence = pred_sequence[:MAX_N_RESULTS]
-    target_sequence = target_sequence[:MAX_N_RESULTS]
+    pred_sequence = pred_sequence[:MAX_N_RESULTS].cpu()
+    target_sequence = target_sequence[:MAX_N_RESULTS].cpu()
 
     n_results = pred_sequence.size(0)
 
