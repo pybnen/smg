@@ -98,11 +98,24 @@ def calc_loss(x_hat, mu, sigma, x, alpha=1.0, beta=1.0, free_bits=0):
     #   alpha must be set to sequence length
     elbo_loss = alpha * r_loss + beta * kl_cost
 
-    return elbo_loss, r_loss.item(), kl_cost.item()
+    return elbo_loss, r_loss.item(), kl_cost.item(), torch.mean(kl_div.detach()).item()
+
+
+def get_grad_norm(params):
+    # alternative https://discuss.pytorch.org/t/check-the-norm-of-gradients/27961/2
+    # total_norm = 0.0
+    # for p in params:
+    #     param_norm = p.grad.data.norm(2)
+    #     total_norm += param_norm.item() ** 2
+    # return total_norm ** (1. / 2)
+    # see https://pytorch.org/docs/stable/_modules/torch/nn/utils/clip_grad.html
+    norm_type = 2
+    total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), norm_type) for p in params]), norm_type)
+    return total_norm.item()
 
 
 def train(epoch, global_step, model, data_loader, loss_fn, opt,
-          lr_scheduler, device, log_interval, logger, beta_fn,
+          lr_scheduler, device, print_log_interval, logger, beta_fn,
           sampling_prob_fn, accumulated_grad_steps, use_apex):
     model.train()
     start_time = time.time()
@@ -110,6 +123,9 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
     n_batches = len(data_loader)
     n_batches = n_batches // accumulated_grad_steps
     data_gen = iter(data_loader)
+
+    # metrics I don't want to log every update step
+    advanced_logging_interval = n_batches // 4
 
     for batch_idx in range(n_batches):
 
@@ -123,7 +139,10 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
         opt.zero_grad()
 
         # keep track of some stats
-        stats = {"loss": 0.0, "r_loss": 0.0, "kl_loss": 0.0, "sample_ratio": 0.0}
+        stats = {"loss": 0.0, "r_loss": 0.0, "kl_loss": 0.0, "kl_div": 0.0, "sample_ratio": 0.0}
+        means = []
+        sigmas = []
+        z_arr = []
 
         # make 'accumulated_grad_steps' forward and backward steps
         # TODO: when used accumulated_grad_steps=16 loss and r_loss returned nan, maybe there
@@ -131,9 +150,9 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
         for _ in range(accumulated_grad_steps):
             x = next(data_gen).to(device)
 
-            x_hat, mu, sigma, sample_ratio = model.forward(x)
+            x_hat, mu, sigma, sample_ratio, z = model.forward(x)
 
-            loss, r_loss, kl_cost = loss_fn(x_hat, mu, sigma, x, beta=beta)
+            loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
             # normalize loss
             loss = loss / accumulated_grad_steps
 
@@ -146,7 +165,11 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
             stats["loss"] += loss.item()
             stats["r_loss"] += r_loss
             stats["kl_loss"] += kl_cost
+            stats["kl_div"] += kl_div
             stats["sample_ratio"] += sample_ratio
+            means.append(mu.detach())
+            sigmas.append(sigma.detach())
+            z_arr.append(z.detach())
 
         # set learning rate
         lr = lr_scheduler(global_step)
@@ -156,11 +179,25 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
         # before logging, normalize stats, note loss is already normalized
         stats["r_loss"] /= accumulated_grad_steps
         stats["kl_loss"] /= accumulated_grad_steps
+        stats["kl_div"] /= accumulated_grad_steps
         stats["sample_ratio"] /= accumulated_grad_steps
 
         # log statistics
+        batch_num = batch_idx + 1
+        if batch_num % advanced_logging_interval == 0:
+            # log histogram
+            logger.add_histogram("train.encoder/mean", torch.cat(means), global_step)
+            logger.add_histogram("train.encoder/sigma", torch.cat(sigmas), global_step)
+            logger.add_histogram("train.encoder/z", torch.cat(z_arr), global_step)
+
+            # log gradient norm
+            logger.add_scalar("train.grad_norm/global", get_grad_norm(model.parameters()), global_step)
+            logger.add_scalar("train.grad_norm/encoder", get_grad_norm(model.encoder.parameters()), global_step)
+            logger.add_scalar("train.grad_norm/decoder", get_grad_norm(model.decoder.parameters()), global_step)
+
         logger.add_scalar("train.loss", stats["loss"], global_step)
         logger.add_scalar("train.losses/kl_loss", stats["kl_loss"], global_step)
+        logger.add_scalar("train.losses/kl_div", stats["kl_div"], global_step)
         logger.add_scalar("train.losses/r_loss", stats["r_loss"], global_step)
         logger.add_scalar("sampling/train_ratio", stats["sample_ratio"], global_step)
 
@@ -168,12 +205,12 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
         logger.add_scalar("sampling/sampling_probability", sampling_prob, global_step)
         logger.add_scalar("lr", lr, global_step)
 
-        batch_num = batch_idx + 1
-        if batch_num % log_interval == 0 or batch_num == n_batches:
+        if batch_num % print_log_interval == 0 or batch_num == n_batches:
             # epoch | batch_num/n_batches (finsihed% ) | loss | r_loss | kl_loss | sec
             print("{:3d} | {:4d}/{} ({:3.0f}%) | {:.6f} | {:.6f} | {:.6f} | {:.4f} sec.".format(
                 epoch, batch_num, n_batches, 100. * batch_num / n_batches,
                 stats["loss"], stats["r_loss"], stats["kl_loss"], time.time() - start_time))
+
         global_step += 1
     return global_step
 
@@ -184,28 +221,42 @@ def evaluate(epoch, model, data_loader, loss_fn, device, logger, best_loss, beta
     total_loss = 0.0
     total_r_loss = 0.0
     total_kl_loss = 0.0
+    total_kl_div = 0.0
     total_sampled_ratio = 0.0
+    means = []
+    sigmas = []
+    z_arr = []
 
     start_time = time.time()
     with torch.no_grad():
         for batch_idx, x in enumerate(data_loader):
             x = x.to(device)
-            x_hat, mu, sigma, sampled_ratio = model.forward(x)
-            loss, r_loss, kl_cost = loss_fn(x_hat, mu, sigma, x, beta=beta)
+            x_hat, mu, sigma, sampled_ratio, z = model.forward(x)
+            loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
 
             total_loss += loss.item()
             total_r_loss += r_loss
             total_kl_loss += kl_cost
+            total_kl_div += kl_div
             total_sampled_ratio += sampled_ratio
+            means.append(mu.detach())
+            sigmas.append(sigma.detach())
+            z_arr.append(z.detach())
 
     avg_loss = total_loss / len(data_loader)
     avg_r_loss = total_r_loss / len(data_loader)
     avg_kl_loss = total_kl_loss / len(data_loader)
+    avg_kl_div = total_kl_div / len(data_loader)
     avg_sampled_ratio = total_sampled_ratio / len(data_loader)
+
+    logger.add_histogram("eval.encoder/mean", torch.cat(means), epoch)
+    logger.add_histogram("eval.encoder/sigma", torch.cat(sigmas), epoch)
+    logger.add_histogram("eval.encoder/z", torch.cat(z_arr), epoch)
 
     logger.add_scalar("eval.loss", avg_loss, epoch)
     logger.add_scalar("eval.losses/kl_beta", beta, epoch)
     logger.add_scalar("eval.losses/kl_loss", avg_kl_loss, epoch)
+    logger.add_scalar("eval.losses/kl_div", avg_kl_div, epoch)
     logger.add_scalar("eval.losses/r_loss", avg_r_loss, epoch)
     logger.add_scalar("sampling/eval_ratio", avg_sampled_ratio, epoch)
 
