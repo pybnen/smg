@@ -2,9 +2,11 @@ import numpy as np
 from pathlib import Path
 import time
 import functools
+import matplotlib
 import matplotlib.pyplot as plt
 
 import torch
+import torch.distributions
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,7 +17,7 @@ from sacred.observers import FileStorageObserver
 import pypianoroll as pp
 
 from smg.common.loggers import CompositeLogger, TensorBoardLogger, SacredLogger
-from smg.music.melody_lib import melody_to_midi, melody_to_pianoroll
+from smg.music import melody_lib
 from smg.datasets.melody_dataset import MelodyDataset, MelodyEncode, MelodyDecode, FixedLengthMelodyDataset
 from smg.models.music_vae.music_vae import MusicVAE
 from smg.models.music_vae import encoder as smg_encoder
@@ -28,10 +30,55 @@ try:
 except ModuleNotFoundError:
     APEX_AVAILABLE = False
 
-MAX_N_RESULTS = 4
+matplotlib.use('Agg')
+MAX_N_RESULTS = 3
 
 # create experiment
 ex = Experiment('train_music_vae', ingredients=[data_ingredient])
+
+MIN_PITCH = 21
+MAX_PITCH = 108
+NUM_SPECIAL_EVENTS = 2
+
+
+def decode_event(event):
+    if event < NUM_SPECIAL_EVENTS:
+        # event is a special event
+        return event - NUM_SPECIAL_EVENTS
+    event = event - NUM_SPECIAL_EVENTS + MIN_PITCH
+    assert MIN_PITCH <= event <= MAX_PITCH
+    return event
+
+
+def decode_melody(melody):
+    return np.array([decode_event(event) for event in melody])
+
+
+def log_reconstruction(logger, tag, pred_sequence, target_sequence, step):
+    pred_sequence = pred_sequence[:MAX_N_RESULTS]
+    target_sequence = target_sequence[:MAX_N_RESULTS]
+
+    n_results = pred_sequence.size(0)
+
+    recon_sampled_melodies = torch.distributions.categorical.Categorical(logits=pred_sequence).sample().numpy()
+    recon_argmax_melodies = pred_sequence.argmax(dim=-1).numpy()
+    target_melodies = target_sequence.argmax(dim=-1).numpy()
+
+    fig = plt.figure(figsize=(15, 10))
+    for i in range(n_results):
+        ax = fig.add_subplot(3, n_results, i + 1)
+        pp.plot_pianoroll(ax, melody_lib.melody_to_pianoroll(decode_melody(target_melodies[i])))
+        plt.title('Original melody')
+
+        ax = fig.add_subplot(3, n_results, n_results + i + 1)
+        pp.plot_pianoroll(ax, melody_lib.melody_to_pianoroll(decode_melody(recon_argmax_melodies[i])))
+        plt.title('Reconstruction (argmax)')
+
+        ax = fig.add_subplot(3, n_results, 2 * n_results + i + 1)
+        pp.plot_pianoroll(ax, melody_lib.melody_to_pianoroll(decode_melody(recon_sampled_melodies[i])))
+        plt.title('Reconstruction (sampled)')
+    logger.add_figure(tag, fig, step)
+    plt.close(fig)
 
 
 def save_checkpoint(file_path, epoch, model, optimizer, use_apex=False):
@@ -185,6 +232,9 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
         # log statistics
         batch_num = batch_idx + 1
         if batch_num % advanced_logging_interval == 0:
+            # log reconstruction
+            log_reconstruction(logger, "train.recon", x_hat.detach(), x.detach(), global_step)
+
             # log histogram
             logger.add_histogram("train.encoder/mean", torch.cat(means), global_step)
             logger.add_histogram("train.encoder/sigma", torch.cat(sigmas), global_step)
@@ -212,6 +262,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
                 stats["loss"], stats["r_loss"], stats["kl_loss"], time.time() - start_time))
 
         global_step += 1
+
     return global_step
 
 
@@ -228,6 +279,7 @@ def evaluate(epoch, model, data_loader, loss_fn, device, logger, best_loss, beta
     z_arr = []
 
     start_time = time.time()
+    random_batch = np.random.choice(len(data_loader))
     with torch.no_grad():
         for batch_idx, x in enumerate(data_loader):
             x = x.to(device)
@@ -242,6 +294,10 @@ def evaluate(epoch, model, data_loader, loss_fn, device, logger, best_loss, beta
             means.append(mu.detach())
             sigmas.append(sigma.detach())
             z_arr.append(z.detach())
+
+            if batch_idx == random_batch:
+                # log reconstruction
+                log_reconstruction(logger, "eval.recon", x_hat.detach(), x.detach(), epoch)
 
     avg_loss = total_loss / len(data_loader)
     avg_r_loss = total_r_loss / len(data_loader)
