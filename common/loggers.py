@@ -18,6 +18,9 @@ class Logger():
     def add_image(self, name, value, step):
         pass
 
+    def add_figure(self, name, fig, step):
+        pass
+
     def add_audio(self, name, value, sample_rate, s):
         pass
 
@@ -51,6 +54,10 @@ class CompositeLogger():
     def add_image(self, name, value, step):
         for l in self.loggers:
             l.add_image(name, value, step)
+
+    def add_figure(self, name, fig, step):
+        for l in self.loggers:
+            l.add_figure(name, fig, step)
 
     def add_audio(self, name, value, sample_rate, s):
         for l in self.loggers:
@@ -96,6 +103,9 @@ class TensorBoardLogger(Logger):
     def add_image(self, name, value, step):
         # value is img_tensor with dim (3, H, W) or (1, H, W)
         self.writer.add_image(name, value, global_step=step)
+
+    def add_figure(self, name, fig, step):
+        self.writer.add_figure(name, fig, global_step=step)
 
     def add_audio(self, name, value, sample_rate, step):
         self.writer.add_audio(name, value, global_step=step, sample_rate=sample_rate)
