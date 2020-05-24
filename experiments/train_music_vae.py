@@ -187,6 +187,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
 
         # keep track of some stats
         stats = {"loss": 0.0, "r_loss": 0.0, "kl_loss": 0.0, "kl_div": 0.0, "sample_ratio": 0.0}
+        acc = 0.0
         means = []
         sigmas = []
         z_arr = []
@@ -202,6 +203,9 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
             loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
             # normalize loss
             loss = loss / accumulated_grad_steps
+
+            # noinspection PyUnresolvedReferences
+            acc += torch.mean((x_hat.detach().argmax(dim=-1) == x.detach().argmax(dim=-1)).float()).item()
 
             if use_apex:
                 with amp.scale_loss(loss, opt) as scaled_loss:
@@ -228,6 +232,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
         stats["kl_loss"] /= accumulated_grad_steps
         stats["kl_div"] /= accumulated_grad_steps
         stats["sample_ratio"] /= accumulated_grad_steps
+        acc /= accumulated_grad_steps
 
         # log statistics
         batch_num = batch_idx + 1
@@ -245,6 +250,7 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
             logger.add_scalar("train.grad_norm/encoder", get_grad_norm(model.encoder.parameters()), global_step)
             logger.add_scalar("train.grad_norm/decoder", get_grad_norm(model.decoder.parameters()), global_step)
 
+        logger.add_scalar("accuracy/train", acc, global_step)
         logger.add_scalar("train.loss", stats["loss"], global_step)
         logger.add_scalar("train.losses/kl_loss", stats["kl_loss"], global_step)
         logger.add_scalar("train.losses/kl_div", stats["kl_div"], global_step)
@@ -257,9 +263,9 @@ def train(epoch, global_step, model, data_loader, loss_fn, opt,
 
         if batch_num % print_log_interval == 0 or batch_num == n_batches:
             # epoch | batch_num/n_batches (finsihed% ) | loss | r_loss | kl_loss | sec
-            print("{:3d} | {:4d}/{} ({:3.0f}%) | {:.6f} | {:.6f} | {:.6f} | {:.4f} sec.".format(
+            print("{:3d} | {:4d}/{} ({:3.0f}%) | {:.6f} | {:.6f} | {:.6f} | {:.4f} | {:.4f} sec.".format(
                 epoch, batch_num, n_batches, 100. * batch_num / n_batches,
-                stats["loss"], stats["r_loss"], stats["kl_loss"], time.time() - start_time))
+                stats["loss"], stats["r_loss"], stats["kl_loss"], acc, time.time() - start_time))
 
         global_step += 1
 
@@ -274,6 +280,7 @@ def evaluate(epoch, model, data_loader, loss_fn, device, logger, best_loss, beta
     total_kl_loss = 0.0
     total_kl_div = 0.0
     total_sampled_ratio = 0.0
+    total_acc = 0.0
     means = []
     sigmas = []
     z_arr = []
@@ -285,6 +292,9 @@ def evaluate(epoch, model, data_loader, loss_fn, device, logger, best_loss, beta
             x = x.to(device)
             x_hat, mu, sigma, sampled_ratio, z = model.forward(x)
             loss, r_loss, kl_cost, kl_div = loss_fn(x_hat, mu, sigma, x, beta=beta)
+
+            # noinspection PyUnresolvedReferences
+            total_acc += torch.mean((x_hat.detach().argmax(dim=-1) == x.detach().argmax(dim=-1)).float()).item()
 
             total_loss += loss.item()
             total_r_loss += r_loss
@@ -304,11 +314,13 @@ def evaluate(epoch, model, data_loader, loss_fn, device, logger, best_loss, beta
     avg_kl_loss = total_kl_loss / len(data_loader)
     avg_kl_div = total_kl_div / len(data_loader)
     avg_sampled_ratio = total_sampled_ratio / len(data_loader)
+    avg_acc = total_acc / len(data_loader)
 
     logger.add_histogram("eval.encoder/mean", torch.cat(means), epoch)
     logger.add_histogram("eval.encoder/sigma", torch.cat(sigmas), epoch)
     logger.add_histogram("eval.encoder/z", torch.cat(z_arr), epoch)
 
+    logger.add_scalar("accuracy/eval", avg_acc, epoch)
     logger.add_scalar("eval.loss", avg_loss, epoch)
     logger.add_scalar("eval.losses/kl_beta", beta, epoch)
     logger.add_scalar("eval.losses/kl_loss", avg_kl_loss, epoch)
@@ -320,8 +332,8 @@ def evaluate(epoch, model, data_loader, loss_fn, device, logger, best_loss, beta
     if new_best:
         best_loss = avg_loss
 
-    print('====> evaluation loss={:.6f}, r_loss={:.6f}, kl_loss={:.6f} ({:.4f} sec.){}'.format(
-        avg_loss, avg_r_loss, avg_kl_loss, time.time() - start_time,
+    print('====> evaluation loss={:.6f}, r_loss={:.6f}, kl_loss={:.6f}, acc={:.4f} ({:.4f} sec.){}'.format(
+        avg_loss, avg_r_loss, avg_kl_loss, avg_acc, time.time() - start_time,
         " *new best*" if new_best else ""))
 
     return best_loss, new_best
