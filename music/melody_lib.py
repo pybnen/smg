@@ -155,7 +155,7 @@ def extract_melodies(pm, quantized_notes,
 
     steps_per_bar = int(steps_per_bar_in_quantized_notes(pm))
     instruments = set(n["instrument"] for n in quantized_notes)
-    melodies = []
+    melodies = {}
     for instrument in instruments:
         instrument_start_step = 0
 
@@ -176,8 +176,11 @@ def extract_melodies(pm, quantized_notes,
             # Require a certain music length.
             if len(melody["events"]) < steps_per_bar * min_bars:
                 continue
-            melodies.append(melody)
 
+            if instrument not in melodies:
+                melodies[instrument] = []
+
+            melodies[instrument].append(melody)
     return melodies
 
 

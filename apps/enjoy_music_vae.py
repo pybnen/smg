@@ -76,7 +76,7 @@ import pretty_midi
 
 
 STEPS_PER_BAR = 16
-MELODY_LENGTH = args.melody_length  # 32
+MELODY_LENGTH = args.melody_length if hasattr(args, "melody_length") else 32
 
 MIN_PITCH = 21
 MAX_PITCH = 108
@@ -109,7 +109,8 @@ def extract_melodies(midi_path):
     #        steps_per_quarter=4)
     pm = pretty_midi.PrettyMIDI(midi_file=midi_path)
     melodies = melody_lib.midi_to_melody(midi_path, pm, gap_bars=float("inf"))
-    return melodies
+    # flatten melodies
+    return [item for sublist in melodies.values() for item in sublist]
 
 
 def get_melody_from_info(melody_info):
@@ -179,7 +180,7 @@ def reconstruct_melody(model, device, melody, encode_event_fn, decode_event_fn):
     model.eval()
     with torch.no_grad():
         input_sequence = melody_to_sequence(melody, encode_event_fn).to(device)
-        output_sequences, _, _, _ = model.forward(input_sequence.unsqueeze(dim=0))
+        output_sequences, _, _, _, _ = model.forward(input_sequence.unsqueeze(dim=0))
     return sequence_to_melody(output_sequences[0], decode_event_fn)
 
 
@@ -295,7 +296,7 @@ def interpolate(model, device, start_melody_info, end_melody_info, num_steps, ou
         z = z.cpu()  # this needs to be done in order to interpolate the way i do it, maybe there is a better way
         interpolated_z = torch.stack([_slerp(z[0], z[1], t) for t in np.linspace(0, 1, num_steps)]).to(device)
 
-        output_sequences, _ = model.decode(interpolated_z, sequence_length=input_sequences.size(1))
+        output_sequences, _, _ = model.decode(interpolated_z, sequence_length=input_sequences.size(1))
         out_melody = sequence_to_melody(output_sequences.view(-1, output_sequences.size(-1)), decode_event_fn)
 
         fig = plt.figure(figsize=(20, 10))
@@ -334,7 +335,7 @@ def sample_cmd(model, device, sequence_length, seed_melody_info=None, out_dirnam
         else:
             z = torch.randn((1, model.decoder.z_dim)).to(device)
 
-        output_sequences, _ = model.decode(z, sequence_length=sequence_length)
+        output_sequences, _, _ = model.decode(z, sequence_length=sequence_length)
         out_melody = sequence_to_melody(output_sequences.view(-1, output_sequences.size(-1)), decode_event_fn)
 
         fig = plt.figure(figsize=(20, 10))

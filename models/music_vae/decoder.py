@@ -9,7 +9,8 @@ class TrainHelper:
                  sequence_length=None,
                  sampling_probability=0.0,
                  aux_input=None,
-                 next_inputs_fn=None):
+                 next_inputs_fn=None,
+                 initial_input=None):
 
         self.aux_input = aux_input
         self.sampler = torch.distributions.Bernoulli(probs=sampling_probability)
@@ -20,15 +21,13 @@ class TrainHelper:
         self.input_sequence_length = self.inputs.size(1) if self.inputs is not None else 0
 
         self.zero_input = torch.zeros(input_shape).type(input_type)
-        self.initial_input = torch.zeros(input_shape).type(input_type)
-        if self.inputs is not None:
-            self.initial_input = self.inputs[:, 0]
-
-        if self.aux_input is not None:
-            self.initial_input = torch.cat((self.initial_input, self.aux_input[:, 0]), dim=-1)
+        if initial_input is not None:
+            self.initial_input = initial_input
+        else:
+            self.initial_input = self.zero_input
 
     def initialize(self):
-        return self.next_inputs(-1, self.zero_input)
+        return self.next_inputs(-1, self.initial_input)
 
     def next_inputs(self, time, outputs):
         next_time = time + 1
@@ -101,7 +100,7 @@ class LstmDecoder(nn.Module):
         sampler = torch.distributions.one_hot_categorical.OneHotCategorical(logits=logits)
         return sampler.sample()
 
-    def forward(self, z, sequence_input=None, sequence_length=None):
+    def forward(self, z, sequence_input=None, sequence_length=None, initial_input=None):
         batch_size, _ = z.size()
         sequence_length = sequence_length or sequence_input.size(1)
 
@@ -126,20 +125,26 @@ class LstmDecoder(nn.Module):
             sequence_length=sequence_length,
             sampling_probability=sampling_probability,
             aux_input=aux_input,
-            next_inputs_fn=self.next_inputs)
+            next_inputs_fn=self.next_inputs,
+            initial_input=initial_input)
 
         # init first outputs TODO maybe use some specific start token instead
         next_inputs = helper.initialize()
         sequence_output = []
+        sampled_output = []
         for t in range(sequence_length):
             _, (ht, ct) = self.lstm_layer(next_inputs.unsqueeze(dim=0), (ht, ct))
             current_output = self.output_layer(ht[-1])
             sequence_output.append(current_output)
 
             next_inputs = helper.next_inputs(t, current_output.detach())  # detach is very important
+            sampled_output.append(next_inputs.detach()[:, :input_features])
+
+        # replace the last element, by sampling from last output distribution
+        sampled_output[-1] = self.next_inputs(current_output.detach())
 
         sequence_output = torch.stack(sequence_output, dim=1)
-        return sequence_output, helper.sampled_cnt / float(sequence_output.size(1))
+        return sequence_output, helper.sampled_cnt / float(sequence_output.size(1)), torch.stack(sampled_output, dim=1)
 
     def create_ckpt(self, with_state=True):
         ckpt = {"clazz": ".".join([self.__module__, self.__class__.__name__]),
@@ -212,7 +217,9 @@ class HierarchicalDecoder(nn.Module):
             assert(subsequences.size(2) == subsequence_length)
 
         sequence_output = []
+        sampled_output = []
         sample_ratios = 0.0
+        initial_output_decoder_input = None
         for i in range(self.num_subsequences):
             # get a "empty" input for one time step
             next_input = torch.zeros((1, batch_size, 1)).type(z.type())
@@ -222,12 +229,18 @@ class HierarchicalDecoder(nn.Module):
             current_c = ht[-1]
 
             subsequence_input = subsequences[:, i] if subsequences is not None else None
-            subsequence_output, sample_ratio = self.output_decoder(current_c,
-                                                                   sequence_input=subsequence_input,
-                                                                   sequence_length=subsequence_length)
-            sample_ratios += sample_ratio
+            subsequence_output, sample_ratio, subsequence_sampled_output = self.output_decoder(current_c,
+                                                                                               sequence_input=subsequence_input,  # noqa
+                                                                                               sequence_length=subsequence_length,  # noqa
+                                                                                               initial_input=initial_output_decoder_input)  # noqa
+            sample_ratios += sample_ratios
             sequence_output.append(subsequence_output)
-        return torch.cat(sequence_output, dim=1), sample_ratios / self.num_subsequences
+            sampled_output.append(subsequence_sampled_output)
+            initial_output_decoder_input = subsequence_sampled_output[:, -1]
+
+        return torch.cat(sequence_output, dim=1),\
+               sample_ratios / self.num_subsequences,\
+               torch.cat(sampled_output, dim=1)
 
     def create_ckpt(self, with_state=True):
         ckpt = {"clazz": ".".join([self.__module__, self.__class__.__name__]),

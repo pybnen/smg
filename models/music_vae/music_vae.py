@@ -34,7 +34,7 @@ class MusicVAE(nn.Module):
 
         # add a `start token` at the beginning of each sequence and truncate last time step
         decoder_input = F.pad(input_sequence, pad=[0, 0, 1, 0, 0, 0])[:, :-1]
-        x_hat, sampled_ratio = self.decode(z, input_sequence=decoder_input, sequence_length=seq_length)
+        x_hat, sampled_ratio, _ = self.decode(z, input_sequence=decoder_input, sequence_length=seq_length)
         return x_hat, mu, sigma, sampled_ratio, z
 
     def create_ckpt(self):

@@ -47,7 +47,7 @@ def _log_metrics(total_loss, total_acc, sample_acc, cnt, print_header):
 def evaluation_step(model, input_sequences):
     with torch.no_grad():
         batch_size, _, n_classes = input_sequences.size()
-        output_sequences, _, _, _ = model.forward(input_sequences)
+        output_sequences, _, _, _, _= model.forward(input_sequences)
 
         inputs_argmax = input_sequences.argmax(dim=-1)
         loss = F.cross_entropy(output_sequences.view(-1, n_classes), inputs_argmax.view(-1), reduction='mean')
